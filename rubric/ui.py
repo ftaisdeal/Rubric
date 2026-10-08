@@ -18,7 +18,10 @@ class IdeaEditor(tk.Toplevel):
         self.idea = idea
         self.saved = False
         self.title(idea.name or "New idea")
-        self.geometry("720x760")
+        width = 720
+        height = self.winfo_screenheight()
+        x = (self.winfo_screenwidth() - width) // 2
+        self.geometry(f"{width}x{height}+{x}+0")
         self.transient(parent)
 
         self._build_header()
@@ -152,8 +155,10 @@ class App(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 8))
         ttk.Button(bar, text="New idea", command=self.new_idea).pack(side="left")
-        ttk.Button(bar, text="Edit", command=self.edit_selected).pack(side="left", padx=6)
-        ttk.Button(bar, text="Delete", command=self.delete_selected).pack(side="left")
+        self.edit_button = ttk.Button(bar, text="Edit", command=self.edit_selected)
+        self.edit_button.pack(side="left", padx=6)
+        self.delete_button = ttk.Button(bar, text="Delete", command=self.delete_selected)
+        self.delete_button.pack(side="left")
 
         cols = ("name", "status", "total") + tuple(c.id for c in CRITERIA)
         self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
@@ -169,6 +174,7 @@ class App(ttk.Frame):
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.tree.bind("<Return>", lambda e: self.edit_selected())
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_edit_state())
 
     def refresh(self) -> None:
         def sort_key(idea: Idea):
@@ -188,6 +194,12 @@ class App(ttk.Frame):
             self.tree.insert("", "end", iid=idea.id, values=row)
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
+        self._update_edit_state()
+
+    def _update_edit_state(self) -> None:
+        state = ["!disabled"] if self.tree.selection() else ["disabled"]
+        self.edit_button.state(state)
+        self.delete_button.state(state)
 
     def _selected(self) -> Idea | None:
         sel = self.tree.selection()
