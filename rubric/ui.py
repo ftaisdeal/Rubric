@@ -9,6 +9,11 @@ from .storage import STATUSES, Idea, Storage, StorageError
 
 UNSCORED = 0
 
+# Fixed column widths of the comparison table, and the frame padding around it.
+NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 240, 100, 90, 130
+APP_PADDING = 10
+TREE_SLACK = 6  # the Treeview's own border
+
 
 class IdeaEditor(tk.Toplevel):
     """Modal dialog for creating or editing one idea."""
@@ -144,7 +149,7 @@ class IdeaEditor(tk.Toplevel):
 
 class App(ttk.Frame):
     def __init__(self, root: tk.Tk, storage: Storage, ideas: list[Idea]):
-        super().__init__(root, padding=10)
+        super().__init__(root, padding=APP_PADDING)
         self.storage = storage
         self.ideas = ideas
         self.pack(fill="both", expand=True)
@@ -165,15 +170,17 @@ class App(ttk.Frame):
         self.tree.heading("name", text="Idea")
         self.tree.heading("status", text="Status")
         self.tree.heading("total", text="Total")
-        self.tree.column("name", width=240, minwidth=160)
-        self.tree.column("status", width=100, anchor="center")
-        self.tree.column("total", width=90, anchor="center")
+        self.tree.column("name", width=NAME_W, minwidth=160)
+        self.tree.column("status", width=STATUS_W, anchor="center")
+        self.tree.column("total", width=TOTAL_W, anchor="center")
         for c in CRITERIA:
             self.tree.heading(c.id, text=c.name)
-            self.tree.column(c.id, width=130, anchor="center")
+            self.tree.column(c.id, width=CRITERION_W, anchor="center")
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.tree.bind("<Return>", lambda e: self.edit_selected())
+        self.tree.bind("<Motion>", self._on_hover)
+        self.tree.bind("<Leave>", lambda e: self._hide_tip())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_edit_state())
 
     def refresh(self) -> None:
@@ -195,6 +202,64 @@ class App(ttk.Frame):
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
         self._update_edit_state()
+
+    def fit_columns(self, window_width: int) -> None:
+        """Shrink the criterion columns so the table never exceeds the window."""
+        fixed = NAME_W + STATUS_W + TOTAL_W
+        spare = window_width - 2 * APP_PADDING - TREE_SLACK - fixed
+        width = max(60, min(CRITERION_W, spare // len(CRITERIA)))
+        for c in CRITERIA:
+            self.tree.column(c.id, width=width)
+
+    def _tip_text(self, row_id: str, col_id: str) -> str:
+        idea = next((i for i in self.ideas if i.id == row_id), None)
+        crit = next((c for c in CRITERIA if c.id == col_id), None)
+        if idea is None or crit is None:
+            return ""
+        score = idea.scores.get(crit.id)
+        if score is None:
+            return "Not scored yet"
+        text = f"{score}: {crit.levels[score - MIN_SCORE]}"
+        reason = idea.reasons.get(crit.id, "").strip()
+        return f"{text}\n\nReason: {reason}" if reason else text
+
+    def _on_hover(self, event: tk.Event) -> None:
+        row = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        key = (row, col)
+        if not row or self.tree.identify_region(event.x, event.y) != "cell":
+            self._hide_tip()
+            return
+        if key == getattr(self, "_tip_key", None):
+            self._move_tip(event)
+            return
+        self._hide_tip()
+        # Displayed columns are "#1".."#N"; map back to the column id.
+        col_id = self.tree.cget("columns")[int(col[1:]) - 1]
+        text = self._tip_text(row, col_id)
+        if not text:
+            return
+        self._tip_key = key
+        tip = self._tip = tk.Toplevel(self)
+        tip.wm_overrideredirect(True)
+        tip.configure(background="#808080")  # shows through as a 1px border
+        tk.Label(
+            tip, text=text, justify="left", wraplength=360, background="#e6f3ff",
+            foreground="black", padx=6, pady=4,
+        ).pack(padx=1, pady=1)
+        self._move_tip(event)
+
+    def _move_tip(self, event: tk.Event) -> None:
+        tip = getattr(self, "_tip", None)
+        if tip is not None:
+            tip.wm_geometry(f"+{event.x_root + 14}+{event.y_root + 16}")
+
+    def _hide_tip(self) -> None:
+        tip = getattr(self, "_tip", None)
+        if tip is not None:
+            tip.destroy()
+        self._tip = None
+        self._tip_key = None
 
     def _update_edit_state(self) -> None:
         state = ["!disabled"] if self.tree.selection() else ["disabled"]
@@ -253,19 +318,29 @@ class App(ttk.Frame):
         self.refresh()
 
 
-def _center(root: tk.Tk, width: int, height: int) -> None:
-    """Size the window (capped to the screen), centered horizontally near the top."""
+def _table_width() -> int:
+    """Window width that exactly fits the comparison table at full column widths."""
+    cols = NAME_W + STATUS_W + TOTAL_W + CRITERION_W * len(CRITERIA)
+    return cols + 2 * APP_PADDING + TREE_SLACK
+
+
+def _center(root: tk.Tk, width: int, height: int) -> int:
+    """Size the window (capped to the screen), centered horizontally near the top.
+
+    Returns the width actually used.
+    """
     width = min(width, root.winfo_screenwidth() - 40)
     height = min(height, root.winfo_screenheight() - 80)
     x = (root.winfo_screenwidth() - width) // 2
     y = 60
     root.geometry(f"{width}x{height}+{x}+{y}")
+    return width
 
 
 def main() -> None:
     root = tk.Tk()
-    root.title("Rubric")
-    _center(root, 1460, 480)
+    root.title("Business Evaluation Rubric")
+    window_width = _center(root, _table_width(), 480)
     storage = Storage()
     try:
         ideas = storage.load()
@@ -276,5 +351,6 @@ def main() -> None:
         )
         root.destroy()
         raise SystemExit(1)
-    App(root, storage, ideas)
+    app = App(root, storage, ideas)
+    app.fit_columns(window_width)
     root.mainloop()
