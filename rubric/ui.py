@@ -160,12 +160,12 @@ class App(ttk.Frame):
         self.tree.heading("name", text="Idea")
         self.tree.heading("status", text="Status")
         self.tree.heading("total", text="Total")
-        self.tree.column("name", width=220)
-        self.tree.column("status", width=90, anchor="center")
-        self.tree.column("total", width=70, anchor="center")
+        self.tree.column("name", width=240, minwidth=160)
+        self.tree.column("status", width=100, anchor="center")
+        self.tree.column("total", width=90, anchor="center")
         for c in CRITERIA:
             self.tree.heading(c.id, text=c.name)
-            self.tree.column(c.id, width=90, anchor="center")
+            self.tree.column(c.id, width=130, anchor="center")
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.tree.bind("<Return>", lambda e: self.edit_selected())
@@ -241,10 +241,19 @@ class App(ttk.Frame):
         self.refresh()
 
 
+def _center(root: tk.Tk, width: int, height: int) -> None:
+    """Size the window (capped to the screen), centered horizontally near the top."""
+    width = min(width, root.winfo_screenwidth() - 40)
+    height = min(height, root.winfo_screenheight() - 80)
+    x = (root.winfo_screenwidth() - width) // 2
+    y = 60
+    root.geometry(f"{width}x{height}+{x}+{y}")
+
+
 def main() -> None:
     root = tk.Tk()
     root.title("Rubric")
-    root.geometry("1100x480")
+    _center(root, 1460, 480)
     storage = Storage()
     try:
         ideas = storage.load()
