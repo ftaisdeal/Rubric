@@ -3,10 +3,11 @@
 import json
 import os
 import re
-import sys
 import shutil
+import sys
 import tempfile
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,19 +16,28 @@ SCHEMA_VERSION = 1
 STATUSES = ("considering", "pursuing", "dropped")
 
 
-def _default_path() -> Path:
-    """data/ideas.json next to the program: beside Rubric.app when built, else
-    in the project folder."""
-    if getattr(sys, "frozen", False):
-        exe = Path(sys.executable).resolve()
-        # .../Rubric.app/Contents/MacOS/Rubric -> the folder holding Rubric.app
-        base = next((p.parent for p in exe.parents if p.suffix == ".app"), exe.parent)
-    else:
-        base = Path(__file__).resolve().parent.parent
-    return base / "data" / "ideas.json"
+APP_NAME = "Rubric"
 
 
-DEFAULT_PATH = _default_path()
+def data_dir(
+    platform: str = sys.platform,
+    env: Mapping[str, str] = os.environ,
+    home: Path | None = None,
+) -> Path:
+    """The per-user folder where this OS expects application data."""
+    home = home or Path.home()
+    if platform == "darwin":
+        return home / "Library" / "Application Support" / APP_NAME
+    if platform.startswith("win"):
+        base = env.get("APPDATA")
+        return (Path(base) if base else home / "AppData" / "Roaming") / APP_NAME
+    # Linux and other Unix: XDG Base Directory spec (relative values are invalid).
+    base = env.get("XDG_DATA_HOME", "")
+    root = Path(base) if base and Path(base).is_absolute() else home / ".local" / "share"
+    return root / APP_NAME.lower()
+
+
+DEFAULT_PATH = data_dir() / "ideas.json"
 
 
 class StorageError(Exception):

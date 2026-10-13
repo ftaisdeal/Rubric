@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rubric.storage import SCHEMA_VERSION, Idea, Storage, StorageError
+from rubric.storage import SCHEMA_VERSION, Idea, Storage, StorageError, data_dir
 
 
 class StorageTests(unittest.TestCase):
@@ -68,6 +68,45 @@ class StorageTests(unittest.TestCase):
         self.storage.save([Idea(name="a", scores={"gone": 3})])
         [loaded] = self.storage.load()
         self.assertEqual(loaded.scores, {"gone": 3})
+
+
+class DataDirTests(unittest.TestCase):
+    home = Path("/home/u")
+
+    def test_macos(self):
+        self.assertEqual(
+            data_dir("darwin", {}, self.home),
+            self.home / "Library" / "Application Support" / "Rubric",
+        )
+
+    def test_windows_uses_appdata(self):
+        self.assertEqual(
+            data_dir("win32", {"APPDATA": "C:/Users/u/AppData/Roaming"}, self.home),
+            Path("C:/Users/u/AppData/Roaming") / "Rubric",
+        )
+
+    def test_windows_without_appdata(self):
+        self.assertEqual(
+            data_dir("win32", {}, self.home),
+            self.home / "AppData" / "Roaming" / "Rubric",
+        )
+
+    def test_linux_default(self):
+        self.assertEqual(
+            data_dir("linux", {}, self.home), self.home / ".local" / "share" / "rubric"
+        )
+
+    def test_linux_xdg_data_home(self):
+        self.assertEqual(
+            data_dir("linux", {"XDG_DATA_HOME": "/x/data"}, self.home),
+            Path("/x/data/rubric"),
+        )
+
+    def test_linux_ignores_relative_xdg(self):
+        self.assertEqual(
+            data_dir("linux", {"XDG_DATA_HOME": "rel"}, self.home),
+            self.home / ".local" / "share" / "rubric",
+        )
 
 
 if __name__ == "__main__":
