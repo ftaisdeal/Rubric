@@ -13,7 +13,6 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 STATUSES = ("considering", "pursuing", "dropped")
-LEGACY_PATH = Path.home() / ".rubric" / "ideas.json"
 
 
 def _default_path() -> Path:
@@ -37,6 +36,14 @@ class StorageError(Exception):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# Criterion ids that were renamed; old keys in saved data are carried over on load.
+RENAMED_IDS = {"problem_severity": "solution_importance"}
+
+
+def _rename_ids(d: dict) -> dict:
+    return {RENAMED_IDS.get(k, k): v for k, v in d.items()}
 
 
 def _valid_color(value) -> str:
@@ -71,9 +78,9 @@ class Idea:
                 description=str(data.get("description", "")),
                 status=str(data.get("status", STATUSES[0])),
                 color=_valid_color(data.get("color", "")),
-                scores={str(k): int(v) for k, v in data.get("scores", {}).items()},
-                reasons={str(k): str(v) for k, v in data.get("reasons", {}).items()},
-                weights={str(k): int(v) for k, v in data.get("weights", {}).items()},
+                scores={str(k): int(v) for k, v in _rename_ids(data.get("scores", {})).items()},
+                reasons={str(k): str(v) for k, v in _rename_ids(data.get("reasons", {})).items()},
+                weights={str(k): int(v) for k, v in _rename_ids(data.get("weights", {})).items()},
                 created=str(data.get("created", _now())),
                 updated=str(data.get("updated", _now())),
             )
@@ -88,12 +95,6 @@ class Storage:
     @property
     def backup_path(self) -> Path:
         return self.path.with_name(self.path.name + ".bak")
-
-    def migrate_legacy(self, legacy: Path = LEGACY_PATH) -> None:
-        """Copy data from the old ~/.rubric location the first time, if present."""
-        if not self.path.exists() and legacy.exists():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy, self.path)
 
     def load(self) -> list[Idea]:
         """Load all ideas. A missing file is an empty list; a bad file raises."""

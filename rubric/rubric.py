@@ -31,7 +31,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "problem_severity", "Problem Severity", 20,
+        "solution_importance", "Solution Importance", 20,
         (
             "Nice-to-have; nobody would notice if it vanished",
             "Mild annoyance; people tolerate it",

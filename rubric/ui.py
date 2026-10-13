@@ -561,7 +561,6 @@ def main() -> None:
     window_width = _center(root, _table_width(), 480)
     storage = Storage()
     try:
-        storage.migrate_legacy()
         ideas = storage.load()
     except StorageError as e:
         messagebox.showerror(

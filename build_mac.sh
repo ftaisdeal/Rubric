@@ -5,5 +5,5 @@ cd "$(dirname "$0")"
 python3 -m venv .build-venv
 .build-venv/bin/pip install --quiet pyinstaller
 .build-venv/bin/pyinstaller --noconfirm --windowed --name Rubric \
-    --osx-bundle-identifier local.rubric run_rubric.py
+    --osx-bundle-identifier local.rubric --icon assets/Rubric.icns run_rubric.py
 echo "Built: $(pwd)/dist/Rubric.app"
