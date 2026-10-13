@@ -2,7 +2,7 @@
 
 Edit this file to change the rubric. Criterion ids are stored in the data
 file, so don't rename an id once you've scored ideas with it. Weights are
-relative; they are normalized when the total is calculated.
+percentages and the defaults must total 100; each idea can override them.
 """
 
 from dataclasses import dataclass
@@ -15,13 +15,13 @@ MAX_SCORE = 5
 class Criterion:
     id: str
     name: str
-    weight: float
+    weight: float  # default percentage; see Idea.weights for per-idea overrides
     levels: tuple[str, str, str, str, str]  # descriptions for scores 1..5
 
 
 CRITERIA: tuple[Criterion, ...] = (
     Criterion(
-        "market_size", "Market Size", 2.0,
+        "market_size", "Market Size", 14,
         (
             "Tiny niche; few potential customers",
             "Small market; limited room to grow",
@@ -31,7 +31,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "problem_severity", "Problem Severity", 3.0,
+        "problem_severity", "Problem Severity", 20,
         (
             "Nice-to-have; nobody would notice if it vanished",
             "Mild annoyance; people tolerate it",
@@ -41,7 +41,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "competition", "Competition", 2.0,
+        "competition", "Competition", 14,
         (
             "Dominated by entrenched incumbents; no opening",
             "Crowded; hard to stand out",
@@ -51,7 +51,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "founder_fit", "Founder Fit", 2.0,
+        "founder_fit", "Founder Fit", 14,
         (
             "No relevant skills, interest or network",
             "Little relevant experience; steep learning curve",
@@ -61,7 +61,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "startup_cost", "Startup Cost", 1.5,
+        "startup_cost", "Startup Cost", 10,
         (
             "Requires major capital before any revenue",
             "Requires substantial outside funding",
@@ -71,7 +71,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "time_to_revenue", "Time to Revenue", 1.5,
+        "time_to_revenue", "Time to Revenue", 10,
         (
             "Several years before any revenue",
             "More than a year to first revenue",
@@ -81,7 +81,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "scalability", "Scalability", 1.5,
+        "scalability", "Scalability", 10,
         (
             "Revenue grows only with proportional effort",
             "Limited scaling; mostly linear with effort",
@@ -91,7 +91,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "defensibility", "Defensibility", 1.0,
+        "defensibility", "Defensibility", 8,
         (
             "Trivially copied; no moat",
             "Easy to copy; weak advantages",
@@ -103,3 +103,5 @@ CRITERIA: tuple[Criterion, ...] = (
 )
 
 CRITERIA_BY_ID: dict[str, Criterion] = {c.id: c for c in CRITERIA}
+
+DEFAULT_WEIGHTS: dict[str, int] = {c.id: int(c.weight) for c in CRITERIA}

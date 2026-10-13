@@ -1,16 +1,23 @@
 """Tkinter desktop UI: comparison table and idea editor."""
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import colorchooser, messagebox, ttk
 
-from .rubric import CRITERIA, MAX_SCORE, MIN_SCORE
+from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
 from .storage import STATUSES, Idea, Storage, StorageError
 
 UNSCORED = 0
 
+# Colors offered to new ideas, cycled in order.
+PALETTE = (
+    "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
+    "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
+)
+SWATCH_W, SWATCH_H = 10, 12  # color block in the table, about one text line tall
+
 # Fixed column widths of the comparison table, and the frame padding around it.
-NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 240, 100, 90, 130
+TREE_COL_W, NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 30, 240, 100, 90, 130
 APP_PADDING = 10
 TREE_SLACK = 6  # the Treeview's own border
 
@@ -52,10 +59,37 @@ class IdeaEditor(tk.Toplevel):
             head, textvariable=self.status_var, values=STATUSES, state="readonly"
         ).grid(row=1, column=1, sticky="w", padx=6, pady=2)
 
-        ttk.Label(head, text="Description").grid(row=2, column=0, sticky="nw")
-        self.desc_text = tk.Text(head, height=3, wrap="word")
+        ttk.Label(head, text="Color").grid(row=2, column=0, sticky="w")
+        self.color = self.idea.color
+        color_row = ttk.Frame(head)
+        color_row.grid(row=2, column=1, sticky="w", padx=6, pady=2)
+        self.swatch = tk.Label(color_row, width=4, relief="solid", borderwidth=1)
+        self.swatch.pack(side="left")
+        ttk.Button(color_row, text="Choose…", command=self._pick_color).pack(
+            side="left", padx=6
+        )
+        ttk.Button(color_row, text="Clear", command=lambda: self._set_color("")).pack(
+            side="left"
+        )
+        self._set_color(self.color)
+
+        ttk.Label(head, text="Description").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+        self.desc_text = tk.Text(head, height=7, wrap="word")
         self.desc_text.insert("1.0", self.idea.description)
-        self.desc_text.grid(row=2, column=1, sticky="ew", padx=6, pady=2)
+        self.desc_text.grid(row=4, column=0, columnspan=2, sticky="ew", pady=2)
+
+    def _set_color(self, color: str) -> None:
+        self.color = color
+        self.swatch.config(background=color or self.cget("background"))
+
+    def _pick_color(self) -> None:
+        _, hex_color = colorchooser.askcolor(
+            color=self.color or None, parent=self, title="Idea color"
+        )
+        if hex_color:  # None if the dialog was cancelled
+            self._set_color(hex_color.lower())
 
     def _build_criteria(self) -> None:
         outer = ttk.Frame(self)
@@ -71,14 +105,40 @@ class IdeaEditor(tk.Toplevel):
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self._enable_wheel_scroll(canvas)
 
+        self.weight_vars: dict[str, tk.IntVar] = {}
         self.score_vars: dict[str, tk.IntVar] = {}
         self.reason_texts: dict[str, tk.Text] = {}
         for c in CRITERIA:
             self._build_criterion(body, c)
 
+    def _enable_wheel_scroll(self, canvas: tk.Canvas) -> None:
+        """Scroll the criteria with the mouse wheel / trackpad, anywhere in the dialog."""
+
+        def on_wheel(event: tk.Event) -> None:
+            w = event.widget
+            # A text box that has its own overflow already scrolled itself.
+            if isinstance(w, tk.Text) and (w is self.desc_text or w.yview() != (0.0, 1.0)):
+                return
+            if canvas.yview() == (0.0, 1.0):  # everything fits; nothing to scroll
+                return
+            if event.num == 4:  # X11 wheel up
+                units = -1
+            elif event.num == 5:  # X11 wheel down
+                units = 1
+            elif self.tk.call("tk", "windowingsystem") == "aqua":
+                units = -event.delta  # macOS reports small per-tick deltas
+            else:
+                units = -event.delta // 120
+            if units:
+                canvas.yview_scroll(units, "units")
+
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind(seq, on_wheel)
+
     def _build_criterion(self, parent: ttk.Frame, c) -> None:
-        box = ttk.LabelFrame(parent, text=f"{c.name}  (weight {c.weight:g})", padding=8)
+        box = ttk.LabelFrame(parent, text=c.name, padding=8)
         box.pack(fill="x", pady=4)
 
         var = tk.IntVar(value=self.idea.scores.get(c.id, UNSCORED))
@@ -93,6 +153,18 @@ class IdeaEditor(tk.Toplevel):
             ttk.Radiobutton(row, text=str(n), value=n, variable=var).pack(
                 side="left", padx=4
             )
+
+        weight = tk.IntVar(
+            value=self.idea.weights.get(c.id, DEFAULT_WEIGHTS[c.id])
+        )
+        self.weight_vars[c.id] = weight
+        weight.trace_add("write", lambda *_: self._update_weight_total())
+        ttk.Label(row, text="%").pack(side="right")
+        ttk.Combobox(
+            row, textvariable=weight, values=list(range(101)), width=4,
+            state="readonly",
+        ).pack(side="right")
+        ttk.Label(row, text="Weight").pack(side="right", padx=(0, 4))
 
         hint = ttk.Label(box, wraplength=620, foreground="gray40")
         hint.pack(fill="x", pady=(4, 2))
@@ -122,17 +194,40 @@ class IdeaEditor(tk.Toplevel):
     def _build_buttons(self) -> None:
         bar = ttk.Frame(self, padding=10)
         bar.pack(fill="x")
+        self.weight_total = ttk.Label(bar)
+        self.weight_total.pack(side="left")
+        self._update_weight_total()
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right")
         ttk.Button(bar, text="Save", command=self._save).pack(side="right", padx=6)
+
+    def _weight_sum(self) -> int:
+        return sum(v.get() for v in self.weight_vars.values())
+
+    def _update_weight_total(self) -> None:
+        total = self._weight_sum()
+        self.weight_total.config(
+            text=f"Weights total: {total}%",
+            foreground="" if total == 100 else "#b91c1c",
+        )
 
     def _save(self) -> None:
         name = self.name_var.get().strip()
         if not name:
             messagebox.showwarning("Name required", "Give the idea a name.", parent=self)
             return
+        total = self._weight_sum()
+        if total != 100:
+            messagebox.showwarning(
+                "Weights must total 100%",
+                f"The weights currently total {total}%. Adjust them to total 100%.",
+                parent=self,
+            )
+            return
         idea = self.idea
         idea.name = name
+        idea.weights = {cid: v.get() for cid, v in self.weight_vars.items()}
         idea.status = self.status_var.get()
+        idea.color = self.color
         idea.description = self.desc_text.get("1.0", "end").strip()
         idea.scores = {
             cid: v.get() for cid, v in self.score_vars.items() if v.get() != UNSCORED
@@ -147,11 +242,72 @@ class IdeaEditor(tk.Toplevel):
         self.destroy()
 
 
+NO_COLOR = "#9ca3af"  # bar color for ideas with no color chosen
+
+
+class ChartWindow(tk.Toplevel):
+    """Horizontal bar chart of each idea's combined total, in the idea's color."""
+
+    ROW_H, BAR_H, LABEL_W, VALUE_W, PAD = 34, 20, 180, 50, 16
+
+    def __init__(self, parent: tk.Misc, ideas: list[Idea]):
+        super().__init__(parent)
+        self.title("Combined ratings")
+        scored = [(i, total_score(i.scores, i.weights)) for i in ideas]
+        self.bars = sorted(
+            ((i, t) for i, t in scored if t is not None),
+            key=lambda b: (-b[1], b[0].name.lower()),
+        )
+        self.skipped = len(ideas) - len(self.bars)
+        height = max(1, len(self.bars)) * self.ROW_H + 2 * self.PAD + 24
+        width = 640
+        x = (self.winfo_screenwidth() - width) // 2
+        self.geometry(f"{width}x{min(height, 700)}+{x}+60")
+        self.minsize(360, 120)
+        self.canvas = tk.Canvas(self, highlightthickness=0, background="white")
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda e: self._draw())
+
+    def _draw(self) -> None:
+        c = self.canvas
+        c.delete("all")
+        if not self.bars:
+            c.create_text(
+                self.PAD, self.PAD, anchor="nw", fill="gray40",
+                text="No fully scored ideas yet.",
+            )
+            return
+        left = self.PAD + self.LABEL_W
+        right = max(left + 40, c.winfo_width() - self.PAD - self.VALUE_W)
+        for n, (idea, total) in enumerate(self.bars):
+            y = self.PAD + n * self.ROW_H + (self.ROW_H - self.BAR_H) // 2
+            mid = y + self.BAR_H // 2
+            c.create_text(
+                left - 8, mid, anchor="e", text=idea.name, fill="black",
+                width=self.LABEL_W - 8,
+            )
+            c.create_rectangle(
+                left, y, left + max(1, (right - left) * total / 100), y + self.BAR_H,
+                fill=idea.color or NO_COLOR, outline="",
+            )
+            c.create_text(
+                right + 8 + 0, mid, anchor="w", text=f"{total:.1f}", fill="black"
+            )
+        base = self.PAD + len(self.bars) * self.ROW_H
+        c.create_line(left, self.PAD, left, base, fill="gray60")
+        if self.skipped:
+            c.create_text(
+                self.PAD, base + 8, anchor="nw", fill="gray40",
+                text=f"{self.skipped} idea(s) not shown: not fully scored.",
+            )
+
+
 class App(ttk.Frame):
     def __init__(self, root: tk.Tk, storage: Storage, ideas: list[Idea]):
         super().__init__(root, padding=APP_PADDING)
         self.storage = storage
         self.ideas = ideas
+        self._swatches: dict[str, tk.PhotoImage] = {}  # keeps images alive
         self.pack(fill="both", expand=True)
         self._build()
         self.refresh()
@@ -164,18 +320,25 @@ class App(ttk.Frame):
         self.edit_button.pack(side="left", padx=6)
         self.delete_button = ttk.Button(bar, text="Delete", command=self.delete_selected)
         self.delete_button.pack(side="left")
+        ttk.Button(bar, text="Chart", command=self.show_chart).pack(side="left", padx=6)
 
         cols = ("name", "status", "total") + tuple(c.id for c in CRITERIA)
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
-        self.tree.heading("name", text="Idea")
-        self.tree.heading("status", text="Status")
-        self.tree.heading("total", text="Total")
+        self.tree = ttk.Treeview(
+            self, columns=cols, show="tree headings", selectmode="browse"
+        )
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=TREE_COL_W, minwidth=TREE_COL_W, stretch=False)
+        self.sort_col, self.sort_desc = "total", True
+        self._heading_text = {"name": "Idea", "status": "Status", "total": "Total"}
+        self._heading_text.update({c.id: c.name for c in CRITERIA})
         self.tree.column("name", width=NAME_W, minwidth=160)
         self.tree.column("status", width=STATUS_W, anchor="center")
         self.tree.column("total", width=TOTAL_W, anchor="center")
         for c in CRITERIA:
-            self.tree.heading(c.id, text=c.name)
             self.tree.column(c.id, width=CRITERION_W, anchor="center")
+        for col in cols:
+            self.tree.heading(col, command=lambda col=col: self.sort_by(col))
+        self._update_headings()
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.tree.bind("<Return>", lambda e: self.edit_selected())
@@ -183,29 +346,71 @@ class App(ttk.Frame):
         self.tree.bind("<Leave>", lambda e: self._hide_tip())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_edit_state())
 
+    def _swatch(self, color: str) -> tk.PhotoImage | str:
+        """A small solid-color image for the row's leading block ("" if no color)."""
+        if not color:
+            return ""
+        if color not in self._swatches:
+            img = tk.PhotoImage(width=SWATCH_W, height=SWATCH_H)
+            img.put(color, to=(0, 0, SWATCH_W, SWATCH_H))
+            self._swatches[color] = img
+        return self._swatches[color]
+
+    def sort_by(self, col: str) -> None:
+        """Sort by a column; clicking the active column flips the direction."""
+        if col == self.sort_col:
+            self.sort_desc = not self.sort_desc
+        else:
+            # Scores and totals start high-to-low; text columns A-Z.
+            self.sort_col, self.sort_desc = col, col not in ("name", "status")
+        self._update_headings()
+        self.refresh()
+
+    def _update_headings(self) -> None:
+        for col, text in self._heading_text.items():
+            if col == self.sort_col:
+                text += " ▼" if self.sort_desc else " ▲"
+            self.tree.heading(col, text=text)
+
     def refresh(self) -> None:
         def sort_key(idea: Idea):
-            total = total_score(idea.scores)
-            return (total is None, -(total or 0), idea.name.lower())
+            if self.sort_col == "name":
+                return (False, idea.name.lower(), idea.name.lower())
+            if self.sort_col == "status":
+                return (False, STATUSES.index(idea.status) if idea.status in STATUSES
+                        else len(STATUSES), idea.name.lower())
+            if self.sort_col == "total":
+                value = total_score(idea.scores, idea.weights)
+            else:
+                value = idea.scores.get(self.sort_col)
+            return (value is None, value or 0, idea.name.lower())
+
+        ideas = sorted(self.ideas, key=sort_key)
+        if self.sort_desc:
+            # Reverse the order but keep unscored ideas at the bottom.
+            scored = [i for i in ideas if not sort_key(i)[0]][::-1]
+            ideas = scored + [i for i in ideas if sort_key(i)[0]]
 
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
-        for idea in sorted(self.ideas, key=sort_key):
-            total = total_score(idea.scores)
+        for idea in ideas:
+            total = total_score(idea.scores, idea.weights)
             row = [
                 idea.name,
                 idea.status,
                 "incomplete" if total is None else f"{total:.1f}",
             ]
             row += [idea.scores.get(c.id, "–") for c in CRITERIA]
-            self.tree.insert("", "end", iid=idea.id, values=row)
+            self.tree.insert(
+                "", "end", iid=idea.id, image=self._swatch(idea.color), values=row
+            )
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
         self._update_edit_state()
 
     def fit_columns(self, window_width: int) -> None:
         """Shrink the criterion columns so the table never exceeds the window."""
-        fixed = NAME_W + STATUS_W + TOTAL_W
+        fixed = TREE_COL_W + NAME_W + STATUS_W + TOTAL_W
         spare = window_width - 2 * APP_PADDING - TREE_SLACK - fixed
         width = max(60, min(CRITERION_W, spare // len(CRITERIA)))
         for c in CRITERIA:
@@ -219,9 +424,16 @@ class App(ttk.Frame):
         score = idea.scores.get(crit.id)
         if score is None:
             return "Not scored yet"
-        text = f"{score}: {crit.levels[score - MIN_SCORE]}"
+        weight = idea.weights.get(crit.id, DEFAULT_WEIGHTS[crit.id])
+        points = weight * (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
+        parts = [f"{score}: {crit.levels[score - MIN_SCORE]}"]
         reason = idea.reasons.get(crit.id, "").strip()
-        return f"{text}\n\nReason: {reason}" if reason else text
+        if reason:
+            parts.append(f"Reason: {reason}")
+        parts.append(
+            f"Weight: {weight}% (adds {points:.1f} of {weight} points to the total)"
+        )
+        return "\n\n".join(parts)
 
     def _on_hover(self, event: tk.Event) -> None:
         row = self.tree.identify_row(event.y)
@@ -235,7 +447,10 @@ class App(ttk.Frame):
             return
         self._hide_tip()
         # Displayed columns are "#1".."#N"; map back to the column id.
-        col_id = self.tree.cget("columns")[int(col[1:]) - 1]
+        index = int(col[1:]) - 1
+        if index < 0:  # the color block column
+            return
+        col_id = self.tree.cget("columns")[index]
         text = self._tip_text(row, col_id)
         if not text:
             return
@@ -284,7 +499,7 @@ class App(ttk.Frame):
         return editor.saved
 
     def new_idea(self) -> None:
-        idea = Idea(name="")
+        idea = Idea(name="", color=PALETTE[len(self.ideas) % len(PALETTE)])
         if self._edit(idea):
             self.ideas.append(idea)
             self._persist()
@@ -303,6 +518,9 @@ class App(ttk.Frame):
             self.refresh()
             self.tree.selection_set(working.id)
 
+    def show_chart(self) -> None:
+        ChartWindow(self, self.ideas)
+
     def delete_selected(self) -> None:
         idea = self._selected()
         if idea is None:
@@ -320,7 +538,7 @@ class App(ttk.Frame):
 
 def _table_width() -> int:
     """Window width that exactly fits the comparison table at full column widths."""
-    cols = NAME_W + STATUS_W + TOTAL_W + CRITERION_W * len(CRITERIA)
+    cols = TREE_COL_W + NAME_W + STATUS_W + TOTAL_W + CRITERION_W * len(CRITERIA)
     return cols + 2 * APP_PADDING + TREE_SLACK
 
 
@@ -343,6 +561,7 @@ def main() -> None:
     window_width = _center(root, _table_width(), 480)
     storage = Storage()
     try:
+        storage.migrate_legacy()
         ideas = storage.load()
     except StorageError as e:
         messagebox.showerror(

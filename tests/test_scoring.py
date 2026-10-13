@@ -25,6 +25,15 @@ class TotalScoreTests(unittest.TestCase):
         b = all_scores(1) | {light.id: 5}
         self.assertGreater(total_score(a), total_score(b))
 
+    def test_default_weights_total_100(self):
+        self.assertEqual(sum(c.weight for c in CRITERIA), 100)
+
+    def test_custom_weights_override_defaults(self):
+        a, b = CRITERIA[0].id, CRITERIA[1].id
+        weights = {c.id: 0 for c in CRITERIA} | {a: 100}
+        self.assertEqual(total_score(all_scores(1) | {a: 5}, weights), 100)
+        self.assertEqual(total_score(all_scores(1) | {b: 5}, weights), 0)
+
     def test_missing_score_is_incomplete(self):
         scores = all_scores(5)
         scores.pop(CRITERIA[0].id)
