@@ -1,2 +1,19 @@
-Icon
+# macOS
 .DS_Store
+Icon?
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.build-venv/
+*.egg-info/
+
+# PyInstaller output
+build/
+dist/
+
+# Local data and scratch notes
+data/
+/ tasks.md

@@ -1,0 +1,60 @@
+# Rubric
+
+A small desktop app for scoring and comparing ideas against a weighted rubric. Score each idea from 1 to 5 on every criterion (market size, solution importance, competition, founder fit, and so on), add a reason for each score, and compare the weighted totals side by side.
+
+## Features
+
+- Comparison table of all ideas with weighted total scores
+- Per-criterion scores, with a description of what each level means
+- Written reasons for each score
+- Per-idea weight overrides
+- Status tracking (considering, pursuing, dropped) and color labels
+- Data stored as a single JSON file in your OS's per-user data folder
+
+## Requirements
+
+- Python 3.10 or newer, with Tkinter (included in most Python installers; on some Linux distributions install `python3-tk`)
+- No third-party runtime dependencies
+
+## Run
+
+```sh
+git clone https://github.com/ftaisdeal/Rubric.git
+cd Rubric
+python3 -m rubric
+```
+
+Your ideas are saved to:
+
+| OS | Location |
+|---|---|
+| macOS | `~/Library/Application Support/Rubric/ideas.json` |
+| Windows | `%APPDATA%\Rubric\ideas.json` |
+| Linux | `$XDG_DATA_HOME/rubric/ideas.json` (default `~/.local/share/rubric/`) |
+
+## Customize the rubric
+
+The criteria, default weights (which must total 100), and score-level descriptions live in [rubric/rubric.py](rubric/rubric.py). Don't rename a criterion id once you have scored ideas with it, because ids are stored in the data file.
+
+## Build the macOS app
+
+```sh
+./build_mac.sh
+```
+
+This creates `dist/Rubric.app` using PyInstaller in a throwaway virtualenv.
+
+## Test
+
+```sh
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE)
