@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 SCHEMA_VERSION = 1
 STATUSES = ("considering", "pursuing", "dropped")
@@ -33,7 +33,7 @@ def data_dir(
         return (Path(base) if base else home / "AppData" / "Roaming") / APP_NAME
     # Linux and other Unix: XDG Base Directory spec (relative values are invalid).
     base = env.get("XDG_DATA_HOME", "")
-    root = Path(base) if base and Path(base).is_absolute() else home / ".local" / "share"
+    root = Path(base) if base and PurePosixPath(base).is_absolute() else home / ".local" / "share"
     return root / APP_NAME.lower()
 
 
