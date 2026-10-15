@@ -5,11 +5,11 @@ A small desktop app for scoring and comparing business ideas against a weighted 
 ## Features
 
 - Comparison table of all ideas with weighted total scores
-- Optional bar chart of the totals, with each bar in the idea's color
 - Per-criterion scores, with a description of what each level means
 - Written reasons for each score
 - Per-idea weight overrides
 - Status tracking (considering, pursuing, dropped) and color labels
+- Optional bar chart of the totals, with each bar in the color chosen for the idea
 - Data stored as a single JSON file in your OS's per-user data folder
 
 ## Requirements
