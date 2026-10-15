@@ -1,6 +1,6 @@
 # Rubric
 
-A small desktop app for scoring and comparing ideas against a weighted rubric. Score each idea from 1 to 5 on every criterion (market size, solution importance, competition, founder fit, and so on), add a reason for each score, and compare the weighted totals side by side.
+A small desktop app for scoring and comparing business ideas against a weighted rubric. Rate each idea from 1 to 5 on criteria such as market size, competition and founder fit, and explain each score. Criteria carry default percentage weights, which you can override per idea. Ideas are ranked by weighted total and shown side by side, with an optional bar chart for visual comparison.
 
 ## Features
 
