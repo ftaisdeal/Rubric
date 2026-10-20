@@ -21,7 +21,7 @@ class Criterion:
 
 CRITERIA: tuple[Criterion, ...] = (
     Criterion(
-        "market_size", "Market Size", 14,
+        "market_size", "Market Size", 12.5,
         (
             "Tiny niche; few potential customers",
             "Small market; limited room to grow",
@@ -31,7 +31,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "solution_importance", "Solution Importance", 20,
+        "solution_importance", "Solution Importance", 12.5,
         (
             "Nice-to-have; nobody would notice if it vanished",
             "Mild annoyance; people tolerate it",
@@ -41,7 +41,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "competition", "Competition", 14,
+        "competition", "Competition", 12.5,
         (
             "Dominated by entrenched incumbents; no opening",
             "Crowded; hard to stand out",
@@ -51,7 +51,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "founder_fit", "Founder Fit", 14,
+        "founder_fit", "Founder Fit", 12.5,
         (
             "No relevant skills, interest or network",
             "Little relevant experience; steep learning curve",
@@ -61,7 +61,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "startup_cost", "Startup Cost", 10,
+        "startup_cost", "Startup Cost", 12.5,
         (
             "Requires major capital before any revenue",
             "Requires substantial outside funding",
@@ -71,7 +71,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "time_to_revenue", "Time to Revenue", 10,
+        "time_to_revenue", "Time to Revenue", 12.5,
         (
             "Several years before any revenue",
             "More than a year to first revenue",
@@ -81,7 +81,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "scalability", "Scalability", 10,
+        "scalability", "Scalability", 12.5,
         (
             "Revenue grows only with proportional effort",
             "Limited scaling; mostly linear with effort",
@@ -91,7 +91,7 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
-        "defensibility", "Defensibility", 8,
+        "defensibility", "Defensibility", 12.5,
         (
             "Trivially copied; no moat",
             "Easy to copy; weak advantages",
@@ -104,4 +104,4 @@ CRITERIA: tuple[Criterion, ...] = (
 
 CRITERIA_BY_ID: dict[str, Criterion] = {c.id: c for c in CRITERIA}
 
-DEFAULT_WEIGHTS: dict[str, int] = {c.id: int(c.weight) for c in CRITERIA}
+DEFAULT_WEIGHTS: dict[str, float] = {c.id: c.weight for c in CRITERIA}

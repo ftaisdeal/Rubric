@@ -17,7 +17,7 @@ PALETTE = (
 SWATCH_W, SWATCH_H = 10, 12  # color block in the table, about one text line tall
 
 # Fixed column widths of the comparison table, and the frame padding around it.
-TREE_COL_W, NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 30, 240, 100, 90, 130
+TREE_COL_W, NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 30, 160, 100, 90, 130
 APP_PADDING = 10
 TREE_SLACK = 6  # the Treeview's own border
 
@@ -107,7 +107,7 @@ class IdeaEditor(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
         self._enable_wheel_scroll(canvas)
 
-        self.weight_vars: dict[str, tk.IntVar] = {}
+        self.weight_vars: dict[str, tk.DoubleVar] = {}
         self.score_vars: dict[str, tk.IntVar] = {}
         self.reason_texts: dict[str, tk.Text] = {}
         for c in CRITERIA:
@@ -154,15 +154,14 @@ class IdeaEditor(tk.Toplevel):
                 side="left", padx=4
             )
 
-        weight = tk.IntVar(
+        weight = tk.DoubleVar(
             value=self.idea.weights.get(c.id, DEFAULT_WEIGHTS[c.id])
         )
         self.weight_vars[c.id] = weight
         weight.trace_add("write", lambda *_: self._update_weight_total())
         ttk.Label(row, text="%").pack(side="right")
         ttk.Combobox(
-            row, textvariable=weight, values=list(range(101)), width=4,
-            state="readonly",
+            row, textvariable=weight, values=list(range(10, 51, 10)), width=5,
         ).pack(side="right")
         ttk.Label(row, text="Weight").pack(side="right", padx=(0, 4))
 
@@ -200,14 +199,26 @@ class IdeaEditor(tk.Toplevel):
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right")
         ttk.Button(bar, text="Save", command=self._save).pack(side="right", padx=6)
 
-    def _weight_sum(self) -> int:
-        return sum(v.get() for v in self.weight_vars.values())
+    @staticmethod
+    def _weight_value(var: tk.DoubleVar) -> float | None:
+        """The typed weight, or None if it isn't a number from 0 to 100."""
+        try:
+            value = var.get()
+        except tk.TclError:
+            return None
+        return value if 0 <= value <= 100 else None
+
+    def _weight_sum(self) -> float:
+        return sum(self._weight_value(v) or 0 for v in self.weight_vars.values())
+
+    def _weights_valid(self) -> bool:
+        return all(self._weight_value(v) is not None for v in self.weight_vars.values())
 
     def _update_weight_total(self) -> None:
         total = self._weight_sum()
         self.weight_total.config(
-            text=f"Weights total: {total}%",
-            foreground="" if total == 100 else "#b91c1c",
+            text=f"Weights total: {total:g}%",
+            foreground="" if total == 100 and self._weights_valid() else "#b91c1c",
         )
 
     def _save(self) -> None:
@@ -215,11 +226,18 @@ class IdeaEditor(tk.Toplevel):
         if not name:
             messagebox.showwarning("Name required", "Give the idea a name.", parent=self)
             return
+        if not self._weights_valid():
+            messagebox.showwarning(
+                "Invalid weight",
+                "Each weight must be a number from 0 to 100.",
+                parent=self,
+            )
+            return
         total = self._weight_sum()
         if total != 100:
             messagebox.showwarning(
                 "Weights must total 100%",
-                f"The weights currently total {total}%. Adjust them to total 100%.",
+                f"The weights currently total {total:g}%. Adjust them to total 100%.",
                 parent=self,
             )
             return
@@ -332,7 +350,7 @@ class App(ttk.Frame):
         self._heading_text = {"name": "Idea", "status": "Status", "total": "Total"}
         self._heading_text.update({c.id: c.name for c in CRITERIA})
         self.tree.column("name", width=NAME_W, minwidth=160)
-        self.tree.column("status", width=STATUS_W, anchor="center")
+        self.tree.column("status", width=STATUS_W, anchor="w")
         self.tree.column("total", width=TOTAL_W, anchor="center")
         for c in CRITERIA:
             self.tree.column(c.id, width=CRITERION_W, anchor="center")
@@ -431,7 +449,7 @@ class App(ttk.Frame):
         if reason:
             parts.append(f"Reason: {reason}")
         parts.append(
-            f"Weight: {weight}% (adds {points:.1f} of {weight} points to the total)"
+            f"Weight: {weight:g}% (adds {points:.1f} of {weight:g} points to the total)"
         )
         return "\n\n".join(parts)
 

@@ -19,11 +19,11 @@ class TotalScoreTests(unittest.TestCase):
         self.assertAlmostEqual(total_score(all_scores(3)), 50)
 
     def test_weights_matter(self):
-        heavy = max(CRITERIA, key=lambda c: c.weight)
-        light = min(CRITERIA, key=lambda c: c.weight)
+        heavy, light = CRITERIA[0], CRITERIA[1]
+        weights = {c.id: 10 for c in CRITERIA} | {heavy.id: 30}
         a = all_scores(1) | {heavy.id: 5}
         b = all_scores(1) | {light.id: 5}
-        self.assertGreater(total_score(a), total_score(b))
+        self.assertGreater(total_score(a, weights), total_score(b, weights))
 
     def test_default_weights_total_100(self):
         self.assertEqual(sum(c.weight for c in CRITERIA), 100)
