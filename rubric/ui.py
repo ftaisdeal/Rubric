@@ -15,10 +15,11 @@ PALETTE = (
     "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
 )
 DELETE_BG = "#f4b6b6"  # pastel red for the editor's Delete button
-SWATCH_W, SWATCH_H = 10, 12  # color block in the table, about one text line tall
 
 # Fixed column widths of the comparison table, and the frame padding around it.
-TREE_COL_W, NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 30, 160, 100, 90, 130
+NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 160, 100, 90, 130
+BAR_W = 100  # the in-table bar chart column
+BAR_PAD = 4  # space around each bar inside that column
 APP_PADDING = 10
 TREE_SLACK = 6  # the Treeview's own border
 
@@ -284,69 +285,11 @@ class IdeaEditor(tk.Toplevel):
 NO_COLOR = "#9ca3af"  # bar color for ideas with no color chosen
 
 
-class ChartWindow(tk.Toplevel):
-    """Horizontal bar chart of each idea's combined total, in the idea's color."""
-
-    ROW_H, BAR_H, LABEL_W, VALUE_W, PAD = 34, 20, 180, 50, 16
-
-    def __init__(self, parent: tk.Misc, ideas: list[Idea]):
-        super().__init__(parent)
-        self.title("Combined ratings")
-        scored = [(i, total_score(i.scores, i.weights)) for i in ideas]
-        self.bars = sorted(
-            ((i, t) for i, t in scored if t is not None),
-            key=lambda b: (-b[1], b[0].name.lower()),
-        )
-        self.skipped = len(ideas) - len(self.bars)
-        height = max(1, len(self.bars)) * self.ROW_H + 2 * self.PAD + 24
-        width = 640
-        x = (self.winfo_screenwidth() - width) // 2
-        self.geometry(f"{width}x{min(height, 700)}+{x}+60")
-        self.minsize(360, 120)
-        self.canvas = tk.Canvas(self, highlightthickness=0, background="white")
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda e: self._draw())
-
-    def _draw(self) -> None:
-        c = self.canvas
-        c.delete("all")
-        if not self.bars:
-            c.create_text(
-                self.PAD, self.PAD, anchor="nw", fill="gray40",
-                text="No fully scored ideas yet.",
-            )
-            return
-        left = self.PAD + self.LABEL_W
-        right = max(left + 40, c.winfo_width() - self.PAD - self.VALUE_W)
-        for n, (idea, total) in enumerate(self.bars):
-            y = self.PAD + n * self.ROW_H + (self.ROW_H - self.BAR_H) // 2
-            mid = y + self.BAR_H // 2
-            c.create_text(
-                left - 8, mid, anchor="e", text=idea.name, fill="black",
-                width=self.LABEL_W - 8,
-            )
-            c.create_rectangle(
-                left, y, left + max(1, (right - left) * total / 100), y + self.BAR_H,
-                fill=idea.color or NO_COLOR, outline="",
-            )
-            c.create_text(
-                right + 8 + 0, mid, anchor="w", text=f"{total:.1f}", fill="black"
-            )
-        base = self.PAD + len(self.bars) * self.ROW_H
-        c.create_line(left, self.PAD, left, base, fill="gray60")
-        if self.skipped:
-            c.create_text(
-                self.PAD, base + 8, anchor="nw", fill="gray40",
-                text=f"{self.skipped} idea(s) not shown: not fully scored.",
-            )
-
-
 class App(ttk.Frame):
     def __init__(self, root: tk.Tk, storage: Storage, ideas: list[Idea]):
         super().__init__(root, padding=APP_PADDING)
         self.storage = storage
         self.ideas = ideas
-        self._swatches: dict[str, tk.PhotoImage] = {}  # keeps images alive
         self.pack(fill="both", expand=True)
         self._build()
         self.refresh()
@@ -355,40 +298,90 @@ class App(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 8))
         ttk.Button(bar, text="New idea", command=self.new_idea).pack(side="left")
-        ttk.Button(bar, text="Chart", command=self.show_chart).pack(side="left", padx=6)
 
-        cols = ("name", "status", "total") + tuple(c.id for c in CRITERIA)
+        cols = ("name", "status", "total", "bars") + tuple(c.id for c in CRITERIA)
         self.tree = ttk.Treeview(
-            self, columns=cols, show="tree headings", selectmode="browse"
+            self, columns=cols, show="headings", selectmode="browse"
         )
-        self.tree.heading("#0", text="")
-        self.tree.column("#0", width=TREE_COL_W, minwidth=TREE_COL_W, stretch=False)
         self.sort_col, self.sort_desc = "total", True
         self._heading_text = {"name": "Idea", "status": "Status", "total": "Total"}
         self._heading_text.update({c.id: c.name for c in CRITERIA})
         self.tree.column("name", width=NAME_W, minwidth=160)
         self.tree.column("status", width=STATUS_W, anchor="w")
         self.tree.column("total", width=TOTAL_W, anchor="center")
+        self.tree.column("bars", width=BAR_W, minwidth=BAR_W, stretch=False)
         for c in CRITERIA:
             self.tree.column(c.id, width=CRITERION_W, anchor="center")
         for col in cols:
-            self.tree.heading(col, command=lambda col=col: self.sort_by(col))
+            if col != "bars":
+                self.tree.heading(col, command=lambda col=col: self.sort_by(col))
+        self.tree.heading("bars", text="")
         self._update_headings()
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.tree.bind("<Return>", lambda e: self.edit_selected())
         self.tree.bind("<Motion>", self._on_hover)
         self.tree.bind("<Leave>", lambda e: self._hide_tip())
+        self._build_bars()
 
-    def _swatch(self, color: str) -> tk.PhotoImage | str:
-        """A small solid-color image for the row's leading block ("" if no color)."""
-        if not color:
-            return ""
-        if color not in self._swatches:
-            img = tk.PhotoImage(width=SWATCH_W, height=SWATCH_H)
-            img.put(color, to=(0, 0, SWATCH_W, SWATCH_H))
-            self._swatches[color] = img
-        return self._swatches[color]
+    def _build_bars(self) -> None:
+        """Overlay a canvas on the "bars" column; Treeview cells can't hold graphics."""
+        self.bars = tk.Canvas(self.tree, highlightthickness=0, background="white")
+        self._bars_pending = False
+        style = ttk.Style(self)
+        self._row_bg = style.lookup("Treeview", "background") or "white"
+        self._sel_bg = style.lookup("Treeview", "background", ["selected"]) or "#0a64d6"
+        self.bars.configure(background=self._row_bg)
+        for event in ("<Configure>", "<<TreeviewSelect>>", "<MouseWheel>",
+                      "<ButtonRelease-1>", "<KeyRelease>"):
+            self.tree.bind(event, lambda e: self._schedule_bars(), add=True)
+        self.bars.bind("<Enter>", lambda e: self._hide_tip())
+        self.bars.bind("<Button-1>", self._bars_click)
+        self.bars.bind("<Double-1>", lambda e: self.edit_selected())
+        self.bars.bind(
+            "<MouseWheel>",
+            lambda e: (self.tree.yview_scroll(-1 if e.delta > 0 else 1, "units"),
+                       self._schedule_bars()),
+        )
+
+    def _bars_click(self, event: tk.Event) -> None:
+        row = self.tree.identify_row(event.y + self.bars.winfo_y())
+        if row:
+            self.tree.selection_set(row)
+            self.tree.focus(row)
+
+    def _schedule_bars(self) -> None:
+        if not self._bars_pending:
+            self._bars_pending = True
+            self.after_idle(self._draw_bars)
+
+    def _draw_bars(self) -> None:
+        self._bars_pending = False
+        rows = [r for r in self.tree.get_children() if self.tree.bbox(r, "bars")]
+        if not rows:
+            self.bars.place_forget()
+            return
+        x, top, width, _ = self.tree.bbox(rows[0], "bars")
+        _, last_y, _, last_h = self.tree.bbox(rows[-1], "bars")
+        self.bars.place(x=x, y=top, width=width, height=last_y + last_h - top)
+        c = self.bars
+        c.delete("all")
+        selected = set(self.tree.selection())
+        ideas = {i.id: i for i in self.ideas}
+        for row in rows:
+            _, y, _, h = self.tree.bbox(row, "bars")
+            y -= top
+            if row in selected:
+                c.create_rectangle(0, y, width, y + h, fill=self._sel_bg, outline="")
+            idea = ideas.get(row)
+            total = total_score(idea.scores, idea.weights) if idea else None
+            if total is None:
+                continue
+            span = width - 2 * BAR_PAD
+            c.create_rectangle(
+                BAR_PAD, y + 3, BAR_PAD + max(1, span * total / 100), y + h - 3,
+                fill=idea.color or NO_COLOR, outline="",
+            )
 
     def sort_by(self, col: str) -> None:
         """Sort by a column; clicking the active column flips the direction."""
@@ -433,17 +426,19 @@ class App(ttk.Frame):
                 idea.name,
                 idea.status,
                 "incomplete" if total is None else f"{total:.1f}",
+                "",
             ]
             row += [idea.scores.get(c.id, "–") for c in CRITERIA]
             self.tree.insert(
-                "", "end", iid=idea.id, image=self._swatch(idea.color), values=row
+                "", "end", iid=idea.id, values=row
             )
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
+        self._schedule_bars()
 
     def fit_columns(self, window_width: int) -> None:
         """Shrink the criterion columns so the table never exceeds the window."""
-        fixed = TREE_COL_W + NAME_W + STATUS_W + TOTAL_W
+        fixed = NAME_W + STATUS_W + TOTAL_W + BAR_W
         spare = window_width - 2 * APP_PADDING - TREE_SLACK - fixed
         width = max(60, min(CRITERION_W, spare // len(CRITERIA)))
         for c in CRITERIA:
@@ -481,8 +476,6 @@ class App(ttk.Frame):
         self._hide_tip()
         # Displayed columns are "#1".."#N"; map back to the column id.
         index = int(col[1:]) - 1
-        if index < 0:  # the color block column
-            return
         col_id = self.tree.cget("columns")[index]
         text = self._tip_text(row, col_id)
         if not text:
@@ -551,13 +544,10 @@ class App(ttk.Frame):
             self.refresh()
             self.tree.selection_set(working.id)
 
-    def show_chart(self) -> None:
-        ChartWindow(self, self.ideas)
-
 
 def _table_width() -> int:
     """Window width that exactly fits the comparison table at full column widths."""
-    cols = TREE_COL_W + NAME_W + STATUS_W + TOTAL_W + CRITERION_W * len(CRITERIA)
+    cols = NAME_W + STATUS_W + TOTAL_W + BAR_W + CRITERION_W * len(CRITERIA)
     return cols + 2 * APP_PADDING + TREE_SLACK
 
 
