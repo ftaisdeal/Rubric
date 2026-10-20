@@ -17,7 +17,7 @@ PALETTE = (
 DELETE_FG = "#e57f7f"  # pastel red text for the editor's Delete button
 
 # Fixed column widths of the comparison table, and the frame padding around it.
-NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 160, 100, 90, 130
+NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 160, 95, 80, 115
 BAR_W = 100  # the in-table bar chart column
 BAR_PAD = 4  # space around each bar inside that column
 APP_PADDING = 10
