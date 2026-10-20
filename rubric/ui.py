@@ -14,6 +14,7 @@ PALETTE = (
     "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
     "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
 )
+DELETE_BG = "#f4b6b6"  # pastel red for the editor's Delete button
 SWATCH_W, SWATCH_H = 10, 12  # color block in the table, about one text line tall
 
 # Fixed column widths of the comparison table, and the frame padding around it.
@@ -25,10 +26,12 @@ TREE_SLACK = 6  # the Treeview's own border
 class IdeaEditor(tk.Toplevel):
     """Modal dialog for creating or editing one idea."""
 
-    def __init__(self, parent: tk.Misc, idea: Idea):
+    def __init__(self, parent: tk.Misc, idea: Idea, can_delete: bool = False):
         super().__init__(parent)
         self.idea = idea
+        self.can_delete = can_delete
         self.saved = False
+        self.deleted = False
         self.title(idea.name or "New idea")
         width = 720
         height = self.winfo_screenheight()
@@ -193,11 +196,29 @@ class IdeaEditor(tk.Toplevel):
     def _build_buttons(self) -> None:
         bar = ttk.Frame(self, padding=10)
         bar.pack(fill="x")
+        ttk.Button(bar, text="Save", command=self._save).pack(side="left")
+        ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="left", padx=6)
+        if self.can_delete:
+            # A plain Label: native buttons ignore background colors on macOS.
+            delete = tk.Label(
+                bar, text="Delete", bg=DELETE_BG, fg="#7f1d1d", cursor="hand2",
+                padx=12, pady=3,
+            )
+            delete.bind("<Button-1>", lambda e: self._delete())
+            delete.pack(side="left")
         self.weight_total = ttk.Label(bar)
-        self.weight_total.pack(side="left")
+        self.weight_total.pack(side="right")
         self._update_weight_total()
-        ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right")
-        ttk.Button(bar, text="Save", command=self._save).pack(side="right", padx=6)
+
+    def _delete(self) -> None:
+        if messagebox.askyesno(
+            "Delete idea",
+            f"Permanently delete “{self.idea.name}”?\n"
+            "(The previous save is kept as a .bak file.)",
+            parent=self,
+        ):
+            self.deleted = True
+            self.destroy()
 
     @staticmethod
     def _weight_value(var: tk.DoubleVar) -> float | None:
@@ -334,10 +355,6 @@ class App(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 8))
         ttk.Button(bar, text="New idea", command=self.new_idea).pack(side="left")
-        self.edit_button = ttk.Button(bar, text="Edit", command=self.edit_selected)
-        self.edit_button.pack(side="left", padx=6)
-        self.delete_button = ttk.Button(bar, text="Delete", command=self.delete_selected)
-        self.delete_button.pack(side="left")
         ttk.Button(bar, text="Chart", command=self.show_chart).pack(side="left", padx=6)
 
         cols = ("name", "status", "total") + tuple(c.id for c in CRITERIA)
@@ -362,7 +379,6 @@ class App(ttk.Frame):
         self.tree.bind("<Return>", lambda e: self.edit_selected())
         self.tree.bind("<Motion>", self._on_hover)
         self.tree.bind("<Leave>", lambda e: self._hide_tip())
-        self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_edit_state())
 
     def _swatch(self, color: str) -> tk.PhotoImage | str:
         """A small solid-color image for the row's leading block ("" if no color)."""
@@ -424,7 +440,6 @@ class App(ttk.Frame):
             )
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
-        self._update_edit_state()
 
     def fit_columns(self, window_width: int) -> None:
         """Shrink the criterion columns so the table never exceeds the window."""
@@ -494,11 +509,6 @@ class App(ttk.Frame):
         self._tip = None
         self._tip_key = None
 
-    def _update_edit_state(self) -> None:
-        state = ["!disabled"] if self.tree.selection() else ["disabled"]
-        self.edit_button.state(state)
-        self.delete_button.state(state)
-
     def _selected(self) -> Idea | None:
         sel = self.tree.selection()
         return next((i for i in self.ideas if i.id == sel[0]), None) if sel else None
@@ -511,14 +521,14 @@ class App(ttk.Frame):
             return False
         return True
 
-    def _edit(self, idea: Idea) -> bool:
-        editor = IdeaEditor(self, idea)
+    def _edit(self, idea: Idea, can_delete: bool = False) -> IdeaEditor:
+        editor = IdeaEditor(self, idea, can_delete)
         self.wait_window(editor)
-        return editor.saved
+        return editor
 
     def new_idea(self) -> None:
         idea = Idea(name="", color=PALETTE[len(self.ideas) % len(PALETTE)])
-        if self._edit(idea):
+        if self._edit(idea).saved:
             self.ideas.append(idea)
             self._persist()
             self.refresh()
@@ -530,7 +540,12 @@ class App(ttk.Frame):
             return
         # Edit a copy so Cancel can't leave half-applied changes behind.
         working = Idea.from_dict(vars(idea))
-        if self._edit(working):
+        editor = self._edit(working, can_delete=True)
+        if editor.deleted:
+            self.ideas.remove(idea)
+            self._persist()
+            self.refresh()
+        elif editor.saved:
             self.ideas[self.ideas.index(idea)] = working
             self._persist()
             self.refresh()
@@ -538,20 +553,6 @@ class App(ttk.Frame):
 
     def show_chart(self) -> None:
         ChartWindow(self, self.ideas)
-
-    def delete_selected(self) -> None:
-        idea = self._selected()
-        if idea is None:
-            return
-        if not messagebox.askyesno(
-            "Delete idea",
-            f"Permanently delete “{idea.name}”?\n"
-            "(The previous save is kept as a .bak file.)",
-        ):
-            return
-        self.ideas.remove(idea)
-        self._persist()
-        self.refresh()
 
 
 def _table_width() -> int:
