@@ -294,10 +294,20 @@ class App(ttk.Frame):
         self._build()
         self.refresh()
 
+    def _build_menu(self) -> None:
+        mod = "Command" if self.tk.call("tk", "windowingsystem") == "aqua" else "Control"
+        root = self.winfo_toplevel()
+        menubar = tk.Menu(root)
+        file_menu = tk.Menu(menubar, tearoff=False)
+        file_menu.add_command(
+            label="New Idea", accelerator=f"{mod}+N", command=self.new_idea
+        )
+        menubar.add_cascade(label="File", menu=file_menu)
+        root.config(menu=menubar)
+        root.bind(f"<{mod}-n>", lambda e: self.new_idea())
+
     def _build(self) -> None:
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=(0, 8))
-        ttk.Button(bar, text="New idea", command=self.new_idea).pack(side="left")
+        self._build_menu()
 
         cols = ("name", "status", "total", "bars") + tuple(c.id for c in CRITERIA)
         self.tree = ttk.Treeview(
