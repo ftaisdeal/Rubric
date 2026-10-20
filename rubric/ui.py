@@ -1,6 +1,5 @@
 """Tkinter desktop UI: comparison table and idea editor."""
 
-import math
 import tkinter as tk
 from tkinter import colorchooser, messagebox, ttk
 
@@ -15,7 +14,7 @@ PALETTE = (
     "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
     "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
 )
-DELETE_BG = "#f4b6b6"  # pastel red for the editor's Delete button
+DELETE_FG = "#e57f7f"  # pastel red text for the editor's Delete button
 
 # Fixed column widths of the comparison table, and the frame padding around it.
 NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 160, 100, 90, 130
@@ -198,36 +197,16 @@ class IdeaEditor(tk.Toplevel):
     def _build_buttons(self) -> None:
         bar = ttk.Frame(self, padding=10)
         bar.pack(fill="x")
-        save = ttk.Button(bar, text="Save", command=self._save)
-        save.pack(side="left")
+        ttk.Button(bar, text="Save", command=self._save).pack(side="left")
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="left", padx=6)
         if self.can_delete:
-            self._rounded_button(bar, "Delete", self._delete, ref=save).pack(side="left")
+            ttk.Style(self).configure("Delete.TButton", foreground=DELETE_FG)
+            ttk.Button(
+                bar, text="Delete", style="Delete.TButton", command=self._delete
+            ).pack(side="left")
         self.weight_total = ttk.Label(bar)
         self.weight_total.pack(side="right")
         self._update_weight_total()
-
-    def _rounded_button(self, parent, text, command, ref) -> tk.Canvas:
-        """A rounded, pastel-red button; native buttons ignore colors on macOS."""
-        w, h, r = ref.winfo_reqwidth(), ref.winfo_reqheight(), 6
-        # Native buttons draw their bezel inset from the widget's frame.
-        inset_x, inset_top, inset_bottom = 1, 4, 3
-        c = tk.Canvas(
-            parent, width=w, height=h, highlightthickness=0,
-            background=self.cget("background"), cursor="hand2",
-        )
-        x0, y0, x1, y1 = inset_x, inset_top, w - inset_x, h - inset_bottom
-        # True quarter-circle corners; smoothing a plain polygon rounds too little.
-        pts = []
-        for cx, cy, start in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0),
-                              (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
-            for step in range(0, 91, 10):
-                a = math.radians(start + step)
-                pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
-        c.create_polygon(pts, fill=DELETE_BG, outline="#e39a9a")
-        c.create_text(w // 2, h // 2, text=text, fill="#7f1d1d")
-        c.bind("<Button-1>", lambda e: command())
-        return c
 
     def _delete(self) -> None:
         if messagebox.askyesno(
