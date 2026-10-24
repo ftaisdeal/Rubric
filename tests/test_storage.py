@@ -20,6 +20,10 @@ class StorageTests(unittest.TestCase):
         idea = Idea(
             name="Widget",
             description="d",
+            strengths="s",
+            weaknesses="w",
+            opportunities="o",
+            threats="t",
             status="pursuing",
             scores={"market_size": 4},
             reasons={"market_size": "big"},
@@ -27,6 +31,18 @@ class StorageTests(unittest.TestCase):
         self.storage.save([idea])
         [loaded] = self.storage.load()
         self.assertEqual(vars(loaded), vars(idea))
+
+    def test_old_file_without_swot_loads_with_empty_defaults(self):
+        self.storage.save([Idea(name="old")])
+        data = json.loads(self.path.read_text())
+        for f in ("strengths", "weaknesses", "opportunities", "threats"):
+            del data["ideas"][0][f]
+        self.path.write_text(json.dumps(data))
+        [loaded] = self.storage.load()
+        self.assertEqual(
+            (loaded.strengths, loaded.weaknesses, loaded.opportunities, loaded.threats),
+            ("", "", "", ""),
+        )
 
     def test_writes_schema_version(self):
         self.storage.save([])

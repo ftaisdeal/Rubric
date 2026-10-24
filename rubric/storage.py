@@ -63,10 +63,17 @@ def _valid_color(value) -> str:
     return ""
 
 
+SWOT_FIELDS = ("strengths", "weaknesses", "opportunities", "threats")
+
+
 @dataclass
 class Idea:
     name: str
     description: str = ""
+    strengths: str = ""
+    weaknesses: str = ""
+    opportunities: str = ""
+    threats: str = ""
     status: str = STATUSES[0]
     color: str = ""  # "#rrggbb", or "" if none chosen
     scores: dict[str, int] = field(default_factory=dict)
@@ -86,6 +93,10 @@ class Idea:
                 id=str(data["id"]),
                 name=str(data["name"]),
                 description=str(data.get("description", "")),
+                strengths=str(data.get("strengths", "")),
+                weaknesses=str(data.get("weaknesses", "")),
+                opportunities=str(data.get("opportunities", "")),
+                threats=str(data.get("threats", "")),
                 status=str(data.get("status", STATUSES[0])),
                 color=_valid_color(data.get("color", "")),
                 scores={str(k): int(v) for k, v in _rename_ids(data.get("scores", {})).items()},

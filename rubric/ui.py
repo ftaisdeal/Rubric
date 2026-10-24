@@ -5,12 +5,13 @@ from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
 from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
-from .storage import STATUSES, Idea, Storage, StorageError
+from .storage import STATUSES, SWOT_FIELDS, Idea, Storage, StorageError
 
 UNSCORED = 0
 
 # Editor background; lighter than the aspect boxes so they stand out.
 PAGE_BG = "#f8f8f8"
+FOCUS_RING = "#a9c4e8"  # light blue ring around a focused SWOT text box
 BORDER = "#cfcfcf"  # 1px outline of the aspect boxes and the description text
 
 # Colors offered to new ideas, cycled in order.
@@ -28,29 +29,61 @@ APP_PADDING = 10
 TREE_SLACK = 6  # the Treeview's own border
 
 
+_bold = None
+
+
+def _bold_font() -> tkfont.Font:
+    """The default font in bold (created once; Tk drops fonts nobody references)."""
+    global _bold
+    if _bold is None:
+        _bold = tkfont.nametofont("TkDefaultFont").copy()
+        _bold.configure(weight="bold")
+    return _bold
+
+
+def _titled_box(parent: tk.Misc, title: str) -> tuple[tk.Frame, ttk.Frame]:
+    """A 1px-outlined box with a bold heading; returns (outline, inner frame).
+
+    The caller packs or grids the outline and fills the inner frame.
+    """
+    outline = tk.Frame(parent, background=BORDER)
+    box = ttk.Frame(outline, padding=8)
+    box.pack(fill="both", expand=True, padx=1, pady=1)
+    ttk.Label(box, text=title, font=_bold_font()).pack(anchor="w", pady=(0, 4))
+    return outline, box
+
+
 class IdeaEditor(tk.Toplevel):
     """Modal dialog for creating or editing one idea."""
 
     def __init__(
         self, parent: tk.Misc, idea: Idea, can_delete: bool = False,
-        save_description=None,
+        save_fields=None, start_on_description: bool = False,
     ):
-        """`save_description(text) -> bool` writes just the description to storage.
+        """`save_fields(**values) -> bool` writes just those fields to storage.
 
-        It is None for an idea that isn't stored yet; the description is then kept
-        with the idea and stored when the idea itself is first saved.
+        The Description and SWOT displays save through it, independently of this
+        dialog's Save. It is None for an idea that isn't stored yet; those fields
+        are then kept with the idea and stored when the idea itself is first saved.
         """
         super().__init__(parent)
+        # A new idea starts on the Description display (name and description first)
+        # with this dialog kept out of sight until the user moves on to the rubric.
+        self._hidden = start_on_description
+        if self._hidden:
+            self.withdraw()
         self.idea = idea
         self.can_delete = can_delete
-        self._save_description = save_description
+        self._save_fields = save_fields
         self.saved = False
         self.deleted = False
-        self.description = idea.description  # pending; committed by this dialog's Save
+        # Name, description and SWOT text; written to the idea by this dialog's Save.
+        self.pending = {f: getattr(idea, f) for f in ("name", "description", *SWOT_FIELDS)}
         self.title(idea.name or "New idea")
         width = min(860, self.winfo_screenwidth() - 40)
         height = self.winfo_screenheight()
         x = (self.winfo_screenwidth() - width) // 2
+        self._width, self._x = width, x
         self.geometry(f"{width}x{height}+{x}+0")
         self.transient(parent)
         self.configure(background=PAGE_BG)
@@ -60,8 +93,18 @@ class IdeaEditor(tk.Toplevel):
         self._build_buttons()
         self._fit_height()
 
+        if self._hidden:
+            self._show_description()
+        else:
+            self.grab_set()
+
+    def reveal(self) -> None:
+        """Show this dialog after the Description display a new idea starts on."""
+        if self._hidden:
+            self._hidden = False
+            self.deiconify()
+            self.lift()
         self.grab_set()
-        self.name_entry.focus_set()
 
     @staticmethod
     def _button(parent: tk.Misc, text: str, command=None, **kw) -> tk.Button:
@@ -84,22 +127,15 @@ class IdeaEditor(tk.Toplevel):
         head.pack(fill="x")
         head.columnconfigure(1, weight=1)
 
-        tk.Label(head, text="Name", background=PAGE_BG).grid(row=0, column=0, sticky="w")
-        self.name_var = tk.StringVar(value=self.idea.name)
-        name_row = tk.Frame(head, background=PAGE_BG)
-        name_row.grid(row=0, column=1, sticky="w", padx=6, pady=2)
-        self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=40)
-        self.name_entry.pack(side="left")
         # Right-aligned to the window edge, in a column of their own.
         links = tk.Frame(head, background=PAGE_BG)
         links.grid(row=0, column=2, sticky="e", pady=2)
-        self._button(links, "Description", self._edit_description).pack(side="left")
-        # Not wired up yet.
-        self._button(links, "SWOT").pack(side="left", padx=(8, 0))
+        self._button(links, "Description", self._show_description).pack(side="left")
+        self._button(links, "SWOT", self._show_swot).pack(side="left", padx=(8, 0))
 
-        tk.Label(head, text="Status", background=PAGE_BG).grid(row=1, column=0, sticky="w")
+        tk.Label(head, text="Status", background=PAGE_BG).grid(row=0, column=0, sticky="w")
         status_row = tk.Frame(head, background=PAGE_BG)
-        status_row.grid(row=1, column=1, sticky="w", padx=6, pady=2)
+        status_row.grid(row=0, column=1, sticky="w", padx=6, pady=2)
         self.status_var = tk.StringVar(value=self.idea.status)
         ttk.Combobox(
             status_row, textvariable=self.status_var, values=STATUSES, state="readonly",
@@ -128,14 +164,37 @@ class IdeaEditor(tk.Toplevel):
         else:
             self.clear_btn.pack_forget()
 
-    def _edit_description(self) -> None:
-        def save(text: str) -> bool:
-            if self._save_description and not self._save_description(text):
+    def _commit(self, values: dict[str, str]) -> bool:
+        """Store Description/SWOT text on its own, without this dialog's Save."""
+        if self._save_fields:
+            if not self.idea.name:
+                # Not stored yet: the first save creates the idea, so it needs the
+                # name even when it comes from a display that doesn't edit it.
+                values = {"name": self.pending["name"], **values}
+            if not self._save_fields(**values):
                 return False
-            self.description = text
-            return True
+        self.pending.update(values)
+        if "name" in values:
+            self.set_name(values["name"])
+        return True
 
-        DescriptionEditor(self, self.description, save)
+    def set_name(self, name: str) -> None:
+        """Hold a name for this dialog's Save, and show it in the title."""
+        self.pending["name"] = name.strip()
+        self.title(self.pending["name"] or "New idea")
+
+    def _show_description(self) -> None:
+        DescriptionEditor(self, self._commit, self._goto)
+
+    def _show_swot(self) -> None:
+        SwotEditor(self, self._commit, self._goto)
+
+    def _goto(self, target: str) -> None:
+        """Called by Description/SWOT after they close, to switch displays."""
+        if target == "description":
+            self._show_description()
+        elif target == "swot":
+            self._show_swot()
 
     def _pick_color(self) -> None:
         _, hex_color = colorchooser.askcolor(
@@ -174,7 +233,9 @@ class IdeaEditor(tk.Toplevel):
         self._criteria_canvas.configure(height=self._criteria_body.winfo_reqheight())
         self.update_idletasks()
         height = min(self.winfo_reqheight(), self.winfo_screenheight() - 60)
-        self.geometry(f"{self.winfo_width()}x{height}")
+        # Not winfo_width/x: they're meaningless while the window is withdrawn.
+        self.window_geometry = f"{self._width}x{height}+{self._x}+0"
+        self.geometry(self.window_geometry)
 
     def _enable_wheel_scroll(self, canvas: tk.Canvas) -> None:
         """Scroll the criteria with the mouse wheel / trackpad, anywhere in the dialog."""
@@ -201,14 +262,8 @@ class IdeaEditor(tk.Toplevel):
             self.bind(seq, on_wheel)
 
     def _build_criterion(self, parent: ttk.Frame, c) -> None:
-        if not hasattr(self, "_bold_font"):
-            self._bold_font = tkfont.nametofont("TkDefaultFont").copy()
-            self._bold_font.configure(weight="bold")
-        border = tk.Frame(parent, background=BORDER)
+        border, box = _titled_box(parent, c.name)
         border.pack(fill="x", pady=3)
-        box = ttk.Frame(border, padding=8)
-        box.pack(fill="x", padx=1, pady=1)
-        ttk.Label(box, text=c.name, font=self._bold_font).pack(anchor="w", pady=(0, 4))
 
         var = tk.IntVar(value=self.idea.scores.get(c.id, UNSCORED))
         self.score_vars[c.id] = var
@@ -307,9 +362,12 @@ class IdeaEditor(tk.Toplevel):
         )
 
     def _save(self) -> None:
-        name = self.name_var.get().strip()
+        name = self.pending["name"].strip()
         if not name:
-            messagebox.showwarning("Name required", "Give the idea a name.", parent=self)
+            messagebox.showwarning(
+                "Name required", "Give the idea a name (in the Description display).",
+                parent=self,
+            )
             return
         if not self._weights_valid():
             messagebox.showwarning(
@@ -331,7 +389,8 @@ class IdeaEditor(tk.Toplevel):
         idea.weights = {cid: v.get() for cid, v in self.weight_vars.items()}
         idea.status = self.status_var.get()
         idea.color = self.color
-        idea.description = self.description
+        for field, value in self.pending.items():
+            setattr(idea, field, value)
         idea.scores = {
             cid: v.get() for cid, v in self.score_vars.items() if v.get() != UNSCORED
         }
@@ -348,60 +407,160 @@ class IdeaEditor(tk.Toplevel):
 NO_COLOR = "#9ca3af"  # bar color for ideas with no color chosen
 
 
-class DescriptionEditor(tk.Toplevel):
-    """Full-height editor for an idea's long description."""
+class _SubEditor(tk.Toplevel):
+    """A full-size display opened from the idea editor (Description, SWOT).
 
-    def __init__(self, parent: tk.Toplevel, text: str, on_save):
-        super().__init__(parent)
+    Layout: bold title and navigation buttons on top, the body, then Save.
+    Save stores this display's fields on their own, via `commit`.
+    """
+
+    title_text = ""
+    other = ""  # the sibling display offered next to "Rubric": "description" or "swot"
+
+    def __init__(self, parent: IdeaEditor, commit, goto):
+        super().__init__(parent.master)
         self._parent = parent
-        self._on_save = on_save
-        self.title("Description")
+        self._commit = commit
+        self._goto = goto
+        self.title(self.title_text)
         self.configure(background=PAGE_BG)
-        width, height = parent.winfo_width(), parent.winfo_height()
-        self.geometry(f"{width}x{height}+{parent.winfo_x()}+{parent.winfo_y()}")
-        self.transient(parent)
+        self.geometry(parent.window_geometry)
+        # Over the idea dialog, or over the app while that one is still hidden.
+        self.transient(parent if parent.winfo_viewable() else parent.master)
 
         top = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
         top.pack(fill="x")
-        self._bold_font = tkfont.nametofont("TkDefaultFont").copy()
-        self._bold_font.configure(weight="bold")
         tk.Label(
-            top, text="Description", background=PAGE_BG, font=self._bold_font
+            top, text=self.title_text, background=PAGE_BG, font=_bold_font()
         ).pack(side="left")
-        # Right-aligned; packed right-to-left, so SWOT first.
-        IdeaEditor._button(top, "SWOT").pack(side="right")  # not wired up yet
-        IdeaEditor._button(top, "Rubric", self._close).pack(side="right", padx=(0, 8))
+        # Right-aligned; packed right-to-left, so the sibling display first.
+        IdeaEditor._button(
+            top, {"swot": "SWOT", "description": "Description"}[self.other],
+            lambda: self._leave(self.other),
+        ).pack(side="right")
+        IdeaEditor._button(top, "Rubric", lambda: self._leave("rubric")).pack(
+            side="right", padx=(0, 8)
+        )
 
-        # Packed before the text so a short window shrinks the text, not the button.
+        # Packed before the body so a short window shrinks the body, not the button.
         bottom = tk.Frame(self, padx=10, background=PAGE_BG)
         bottom.pack(side="bottom", fill="x", pady=(8, 18))
         IdeaEditor._button(bottom, "Save", self._save).pack(side="left")
 
         body = tk.Frame(self, padx=10, background=PAGE_BG)
         body.pack(fill="both", expand=True)
+        self._build_body(body)
+
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _build_body(self, body: tk.Frame) -> None:
+        raise NotImplementedError
+
+    def _values(self) -> dict[str, str]:
+        raise NotImplementedError
+
+    def _valid(self) -> bool:
+        return True
+
+    def _stash(self) -> None:
+        """Hand values the idea editor itself needs to it when leaving unsaved."""
+
+    def _save(self) -> None:
+        if self._valid() and self._commit(self._values()):
+            self._close()
+
+    def _leave(self, target: str) -> None:
+        """Close without saving and open another display ("rubric" is the editor)."""
+        self._stash()
+        self._close(reveal=target == "rubric")
+        self._goto(target)
+
+    def _cancel(self) -> None:
+        """The window's close button: leave, and drop an idea that isn't shown yet."""
+        if self._parent._hidden:
+            self.destroy()
+            self._parent.destroy()
+        else:
+            self._close()
+
+    def _close(self, reveal: bool = True) -> None:
+        self.destroy()
+        if self._parent._hidden:
+            if reveal:
+                self._parent.reveal()
+        else:
+            self._parent.grab_set()  # hand the modal grab back to the idea dialog
+
+
+class DescriptionEditor(_SubEditor):
+    """The idea's name and its full-height long description."""
+
+    title_text = "Description"
+    other = "swot"
+
+    def _build_body(self, body: tk.Frame) -> None:
+        name_row = tk.Frame(body, background=PAGE_BG)
+        name_row.pack(fill="x", pady=(0, 10))
+        tk.Label(name_row, text="Name", background=PAGE_BG).pack(side="left")
+        self.name_var = tk.StringVar(value=self._parent.pending["name"])
+        self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=40)
+        self.name_entry.pack(side="left", padx=6)
+
         scroll = ttk.Scrollbar(body, orient="vertical")
         outline = tk.Frame(body, background=BORDER)
         self.text = tk.Text(
             outline, wrap="word", yscrollcommand=scroll.set, borderwidth=0,
-            highlightthickness=0,
+            highlightthickness=0, font="TkDefaultFont",
         )
         scroll.config(command=self.text.yview)
         scroll.pack(side="right", fill="y")
         outline.pack(side="left", fill="both", expand=True)
         self.text.pack(fill="both", expand=True, padx=1, pady=1)  # 1px border
-        self.text.insert("1.0", text)
+        self.text.insert("1.0", self._parent.pending["description"])
+        (self.text if self.name_var.get() else self.name_entry).focus_set()
 
-        self.grab_set()
-        self.text.focus_set()
-        self.protocol("WM_DELETE_WINDOW", self._close)
+    def _valid(self) -> bool:
+        if self.name_var.get().strip():
+            return True
+        messagebox.showwarning("Name required", "Give the idea a name.", parent=self)
+        return False
 
-    def _save(self) -> None:
-        if self._on_save(self.text.get("1.0", "end").strip()):
-            self._close()
+    def _stash(self) -> None:
+        self._parent.set_name(self.name_var.get())
 
-    def _close(self) -> None:
-        self.destroy()
-        self._parent.grab_set()  # hand the modal grab back to the idea dialog
+    def _values(self) -> dict[str, str]:
+        return {
+            "name": self.name_var.get().strip(),
+            "description": self.text.get("1.0", "end").strip(),
+        }
+
+
+class SwotEditor(_SubEditor):
+    """Strengths, weaknesses, opportunities and threats: four boxes, one text each."""
+
+    title_text = "SWOT"
+    other = "description"
+
+    def _build_body(self, body: tk.Frame) -> None:
+        body.columnconfigure(0, weight=1)
+        self.texts: dict[str, tk.Text] = {}
+        for row, field in enumerate(SWOT_FIELDS):
+            body.rowconfigure(row, weight=1, uniform="swot")
+            outline, box = _titled_box(body, field.capitalize())
+            outline.grid(row=row, column=0, sticky="nsew", pady=3)
+            # The focus ring is the Text's highlight: 1px, and light (white when idle).
+            text = tk.Text(
+                box, wrap="word", height=3, borderwidth=0, highlightthickness=1,
+                highlightbackground="white", highlightcolor=FOCUS_RING,
+            )
+            text.insert("1.0", self._parent.pending[field])
+            text.pack(fill="both", expand=True)
+            self.texts[field] = text
+        self.texts[SWOT_FIELDS[0]].focus_set()
+
+    def _values(self) -> dict[str, str]:
+        return {f: t.get("1.0", "end").strip() for f, t in self.texts.items()}
 
 
 class App(ttk.Frame):
@@ -419,11 +578,16 @@ class App(ttk.Frame):
         menubar = tk.Menu(root)
         file_menu = tk.Menu(menubar, tearoff=False)
         file_menu.add_command(
-            label="New Idea", accelerator=f"{mod}+N", command=self.new_idea
+            label="New Idea", accelerator=f"{mod}+N", command=self._new_idea_soon
         )
         menubar.add_cascade(label="File", menu=file_menu)
         root.config(menu=menubar)
-        root.bind(f"<{mod}-n>", lambda e: self.new_idea())
+        root.bind(f"<{mod}-n>", lambda e: self._new_idea_soon())
+
+    def _new_idea_soon(self) -> None:
+        # Not inside the menu's own callback: a modal dialog opened (and waited on)
+        # from within a native macOS menu action can leave the app unresponsive.
+        self.after(50, self.new_idea)
 
     def _build(self) -> None:
         self._build_menu()
@@ -644,16 +808,46 @@ class App(ttk.Frame):
         return True
 
     def _edit(
-        self, idea: Idea, can_delete: bool = False, save_description=None
+        self, idea: Idea, can_delete: bool = False, save_fields=None,
+        start_on_description: bool = False,
     ) -> IdeaEditor:
-        editor = IdeaEditor(self, idea, can_delete, save_description)
+        editor = IdeaEditor(self, idea, can_delete, save_fields, start_on_description)
         self.wait_window(editor)
         return editor
 
     def new_idea(self) -> None:
         idea = Idea(name="", color=PALETTE[len(self.ideas) % len(PALETTE)])
-        if self._edit(idea).saved:
+
+        def save_fields(**values: str) -> bool:
+            """Create the idea on the first save (once it has a name), then update it.
+
+            Everything the user hasn't filled in yet keeps the Idea defaults:
+            empty text, no scores, default weights.
+            """
+            if not (values.get("name") or idea.name):
+                messagebox.showwarning(
+                    "Name required", "Give the idea a name first.", parent=self
+                )
+                return False
+            old = {k: getattr(idea, k) for k in values}
+            for k, v in values.items():
+                setattr(idea, k, v)
+            is_new = idea not in self.ideas
+            if is_new:
+                self.ideas.append(idea)
+            if self._persist():
+                self.refresh()
+                return True
+            for k, v in old.items():
+                setattr(idea, k, v)
+            if is_new:
+                self.ideas.remove(idea)
+            return False
+
+        saved = self._edit(idea, save_fields=save_fields, start_on_description=True).saved
+        if saved and idea not in self.ideas:
             self.ideas.append(idea)
+        if idea in self.ideas:  # created along the way, or just saved
             self._persist()
             self.refresh()
             self.tree.selection_set(idea.id)
@@ -665,15 +859,19 @@ class App(ttk.Frame):
         # Edit a copy so Cancel can't leave half-applied changes behind.
         working = Idea.from_dict(vars(idea))
 
-        def save_description(text: str) -> bool:
-            # Independent of the editor's Save: only the stored description changes.
-            old, idea.description = idea.description, text
+        def save_fields(**values: str) -> bool:
+            # Independent of the editor's Save: only these stored fields change.
+            old = {k: getattr(idea, k) for k in values}
+            for k, v in values.items():
+                setattr(idea, k, v)
             if self._persist():
+                self.refresh()  # the name may have changed
                 return True
-            idea.description = old
+            for k, v in old.items():
+                setattr(idea, k, v)
             return False
 
-        editor = self._edit(working, can_delete=True, save_description=save_description)
+        editor = self._edit(working, can_delete=True, save_fields=save_fields)
         if editor.deleted:
             self.ideas.remove(idea)
             self._persist()
