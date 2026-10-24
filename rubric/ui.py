@@ -1,13 +1,16 @@
 """Tkinter desktop UI: comparison table and idea editor."""
 
 import tkinter as tk
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
 from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
 from .storage import STATUSES, Idea, Storage, StorageError
 
 UNSCORED = 0
+
+# Editor background; lighter than the aspect boxes so they stand out.
+PAGE_BG = "#f8f8f8"
 
 # Colors offered to new ideas, cycled in order.
 PALETTE = (
@@ -34,11 +37,12 @@ class IdeaEditor(tk.Toplevel):
         self.saved = False
         self.deleted = False
         self.title(idea.name or "New idea")
-        width = 720
+        width = min(860, self.winfo_screenwidth() - 40)
         height = self.winfo_screenheight()
         x = (self.winfo_screenwidth() - width) // 2
         self.geometry(f"{width}x{height}+{x}+0")
         self.transient(parent)
+        self.configure(background=PAGE_BG)
 
         self._build_header()
         self._build_criteria()
@@ -47,46 +51,67 @@ class IdeaEditor(tk.Toplevel):
         self.grab_set()
         self.name_entry.focus_set()
 
+    @staticmethod
+    def _button(parent: tk.Misc, text: str, command=None, **kw) -> tk.Button:
+        """A native button whose surround matches the page background.
+
+        ttk buttons paint a system-gray rectangle behind their rounded corners.
+        """
+        return tk.Button(
+            parent, text=text, command=command, highlightbackground=PAGE_BG, **kw
+        )
+
+    @staticmethod
+    def _text_width(items) -> int:
+        """Combobox width, in "0" characters, that just fits the widest item."""
+        font = tkfont.nametofont("TkTextFont")
+        return -(-max(font.measure(s) for s in items) // font.measure("0"))
+
     def _build_header(self) -> None:
-        head = ttk.Frame(self, padding=10)
+        head = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
         head.pack(fill="x")
         head.columnconfigure(1, weight=1)
 
-        ttk.Label(head, text="Name").grid(row=0, column=0, sticky="w")
+        tk.Label(head, text="Name", background=PAGE_BG).grid(row=0, column=0, sticky="w")
         self.name_var = tk.StringVar(value=self.idea.name)
-        self.name_entry = ttk.Entry(head, textvariable=self.name_var)
-        self.name_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=2)
+        name_row = tk.Frame(head, background=PAGE_BG)
+        name_row.grid(row=0, column=1, sticky="w", padx=6, pady=2)
+        self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=40)
+        self.name_entry.pack(side="left")
+        # Not wired up yet.
+        for label in ("Description", "Rubric", "SWOT"):
+            self._button(name_row, label).pack(side="left", padx=(8, 0))
 
-        ttk.Label(head, text="Status").grid(row=1, column=0, sticky="w")
+        tk.Label(head, text="Status", background=PAGE_BG).grid(row=1, column=0, sticky="w")
+        status_row = tk.Frame(head, background=PAGE_BG)
+        status_row.grid(row=1, column=1, sticky="w", padx=6, pady=2)
         self.status_var = tk.StringVar(value=self.idea.status)
         ttk.Combobox(
-            head, textvariable=self.status_var, values=STATUSES, state="readonly"
-        ).grid(row=1, column=1, sticky="w", padx=6, pady=2)
+            status_row, textvariable=self.status_var, values=STATUSES, state="readonly",
+            width=self._text_width(STATUSES),
+        ).pack(side="left")
 
-        ttk.Label(head, text="Color").grid(row=2, column=0, sticky="w")
+        tk.Label(status_row, text="Color", background=PAGE_BG).pack(side="left", padx=(16, 6))
         self.color = self.idea.color
-        color_row = ttk.Frame(head)
-        color_row.grid(row=2, column=1, sticky="w", padx=6, pady=2)
-        self.swatch = tk.Label(color_row, width=4, relief="solid", borderwidth=1)
+        self.swatch = tk.Label(
+            status_row, width=6, relief="solid", borderwidth=1, cursor="hand2",
+            foreground="gray50",
+        )
         self.swatch.pack(side="left")
-        ttk.Button(color_row, text="Choose…", command=self._pick_color).pack(
-            side="left", padx=6
-        )
-        ttk.Button(color_row, text="Clear", command=lambda: self._set_color("")).pack(
-            side="left"
-        )
+        self.swatch.bind("<Button-1>", lambda e: self._pick_color())
+        self.clear_btn = tk.Label(status_row, text="×", cursor="hand2", background=PAGE_BG)
+        self.clear_btn.bind("<Button-1>", lambda e: self._set_color(""))
         self._set_color(self.color)
-
-        ttk.Label(head, text="Description").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
-        )
-        self.desc_text = tk.Text(head, height=7, wrap="word")
-        self.desc_text.insert("1.0", self.idea.description)
-        self.desc_text.grid(row=4, column=0, columnspan=2, sticky="ew", pady=2)
 
     def _set_color(self, color: str) -> None:
         self.color = color
-        self.swatch.config(background=color or self.cget("background"))
+        self.swatch.config(
+            background=color or self.cget("background"), text="" if color else "none"
+        )
+        if color:
+            self.clear_btn.pack(side="left", padx=6)
+        else:
+            self.clear_btn.pack_forget()
 
     def _pick_color(self) -> None:
         _, hex_color = colorchooser.askcolor(
@@ -96,11 +121,11 @@ class IdeaEditor(tk.Toplevel):
             self._set_color(hex_color.lower())
 
     def _build_criteria(self) -> None:
-        outer = ttk.Frame(self)
+        outer = tk.Frame(self, background=PAGE_BG)
         outer.pack(fill="both", expand=True, padx=10)
-        canvas = tk.Canvas(outer, highlightthickness=0)
+        canvas = tk.Canvas(outer, highlightthickness=0, background=PAGE_BG)
         scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        body = ttk.Frame(canvas)
+        body = tk.Frame(canvas, background=PAGE_BG)
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         body.bind(
@@ -123,7 +148,7 @@ class IdeaEditor(tk.Toplevel):
         def on_wheel(event: tk.Event) -> None:
             w = event.widget
             # A text box that has its own overflow already scrolled itself.
-            if isinstance(w, tk.Text) and (w is self.desc_text or w.yview() != (0.0, 1.0)):
+            if isinstance(w, tk.Text) and w.yview() != (0.0, 1.0):
                 return
             if canvas.yview() == (0.0, 1.0):  # everything fits; nothing to scroll
                 return
@@ -142,8 +167,14 @@ class IdeaEditor(tk.Toplevel):
             self.bind(seq, on_wheel)
 
     def _build_criterion(self, parent: ttk.Frame, c) -> None:
-        box = ttk.LabelFrame(parent, text=c.name, padding=8)
-        box.pack(fill="x", pady=4)
+        if not hasattr(self, "_bold_font"):
+            self._bold_font = tkfont.nametofont("TkDefaultFont").copy()
+            self._bold_font.configure(weight="bold")
+        border = tk.Frame(parent, background="#cfcfcf")  # 1px light outline
+        border.pack(fill="x", pady=3)
+        box = ttk.Frame(border, padding=8)
+        box.pack(fill="x", padx=1, pady=1)
+        ttk.Label(box, text=c.name, font=self._bold_font).pack(anchor="w", pady=(0, 4))
 
         var = tk.IntVar(value=self.idea.scores.get(c.id, UNSCORED))
         self.score_vars[c.id] = var
@@ -169,13 +200,13 @@ class IdeaEditor(tk.Toplevel):
         ).pack(side="right")
         ttk.Label(row, text="Weight").pack(side="right", padx=(0, 4))
 
-        hint = ttk.Label(box, wraplength=620, foreground="gray40")
-        hint.pack(fill="x", pady=(4, 2))
+        hint = ttk.Label(row, wraplength=520, foreground="gray40", justify="left")
+        hint.pack(side="left", fill="x", padx=(12, 8))
         warn = ttk.Label(box, text="Add a reason for this score", foreground="#b45309")
 
         reason = tk.Text(box, height=2, wrap="word")
         reason.insert("1.0", self.idea.reasons.get(c.id, ""))
-        reason.pack(fill="x")
+        reason.pack(fill="x", pady=(4, 0))
         self.reason_texts[c.id] = reason
 
         def refresh(*_):
@@ -183,7 +214,7 @@ class IdeaEditor(tk.Toplevel):
             if score == UNSCORED:
                 hint.config(text="Not scored yet")
             else:
-                hint.config(text=f"{score}: {c.levels[score - MIN_SCORE]}")
+                hint.config(text=c.levels[score - MIN_SCORE])
             has_reason = bool(reason.get("1.0", "end").strip())
             if score != UNSCORED and not has_reason:
                 warn.pack(fill="x", before=reason)
@@ -195,16 +226,15 @@ class IdeaEditor(tk.Toplevel):
         refresh()
 
     def _build_buttons(self) -> None:
-        bar = ttk.Frame(self, padding=10)
+        bar = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Save", command=self._save).pack(side="left")
-        ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="left", padx=6)
+        self._button(bar, "Save", self._save).pack(side="left")
+        self._button(bar, "Cancel", self.destroy).pack(side="left", padx=6)
         if self.can_delete:
-            ttk.Style(self).configure("Delete.TButton", foreground=DELETE_FG)
-            ttk.Button(
-                bar, text="Delete", style="Delete.TButton", command=self._delete
-            ).pack(side="left")
-        self.weight_total = ttk.Label(bar)
+            self._button(bar, "Delete", self._delete, foreground=DELETE_FG).pack(
+                side="left"
+            )
+        self.weight_total = tk.Label(bar, background=PAGE_BG)
         self.weight_total.pack(side="right")
         self._update_weight_total()
 
@@ -237,7 +267,7 @@ class IdeaEditor(tk.Toplevel):
         total = self._weight_sum()
         self.weight_total.config(
             text=f"Weights total: {total:g}%",
-            foreground="" if total == 100 and self._weights_valid() else "#b91c1c",
+            foreground="black" if total == 100 and self._weights_valid() else "#b91c1c",
         )
 
     def _save(self) -> None:
@@ -265,7 +295,6 @@ class IdeaEditor(tk.Toplevel):
         idea.weights = {cid: v.get() for cid, v in self.weight_vars.items()}
         idea.status = self.status_var.get()
         idea.color = self.color
-        idea.description = self.desc_text.get("1.0", "end").strip()
         idea.scores = {
             cid: v.get() for cid, v in self.score_vars.items() if v.get() != UNSCORED
         }
