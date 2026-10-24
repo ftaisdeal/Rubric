@@ -12,6 +12,8 @@ UNSCORED = 0
 # Editor background; lighter than the aspect boxes so they stand out.
 PAGE_BG = "#f8f8f8"
 FOCUS_RING = "#a9c4e8"  # light blue ring around a focused SWOT text box
+TIP_BG = "#f3f9ff"  # background of every tooltip: a very light blue
+DESCRIPTION_TIP_W = 600  # wrap width of the description tooltip over an idea name
 BORDER = "#cfcfcf"  # 1px outline of the aspect boxes and the description text
 
 # Colors offered to new ideas, cycled in order.
@@ -77,8 +79,8 @@ class IdeaEditor(tk.Toplevel):
         self._save_fields = save_fields
         self.saved = False
         self.deleted = False
-        # Name, description and SWOT text; written to the idea by this dialog's Save.
-        self.pending = {f: getattr(idea, f) for f in ("name", "description", *SWOT_FIELDS)}
+        # Name, status, color, description and SWOT text; written to the idea by this dialog's Save.
+        self.pending = {f: getattr(idea, f) for f in ("name", "status", "color", "description", *SWOT_FIELDS)}
         self.title(idea.name or "New idea")
         width = min(860, self.winfo_screenwidth() - 40)
         height = self.winfo_screenheight()
@@ -97,6 +99,10 @@ class IdeaEditor(tk.Toplevel):
             self._show_description()
         else:
             self.grab_set()
+
+    def request_close(self) -> None:
+        """Command-W: same as Cancel."""
+        self.destroy()
 
     def reveal(self) -> None:
         """Show this dialog after the Description display a new idea starts on."""
@@ -125,44 +131,11 @@ class IdeaEditor(tk.Toplevel):
     def _build_header(self) -> None:
         head = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
         head.pack(fill="x")
-        head.columnconfigure(1, weight=1)
-
-        # Right-aligned to the window edge, in a column of their own.
-        links = tk.Frame(head, background=PAGE_BG)
-        links.grid(row=0, column=2, sticky="e", pady=2)
-        self._button(links, "Description", self._show_description).pack(side="left")
-        self._button(links, "SWOT", self._show_swot).pack(side="left", padx=(8, 0))
-
-        tk.Label(head, text="Status", background=PAGE_BG).grid(row=0, column=0, sticky="w")
-        status_row = tk.Frame(head, background=PAGE_BG)
-        status_row.grid(row=0, column=1, sticky="w", padx=6, pady=2)
-        self.status_var = tk.StringVar(value=self.idea.status)
-        ttk.Combobox(
-            status_row, textvariable=self.status_var, values=STATUSES, state="readonly",
-            width=self._text_width(STATUSES),
-        ).pack(side="left")
-
-        tk.Label(status_row, text="Color", background=PAGE_BG).pack(side="left", padx=(16, 6))
-        self.color = self.idea.color
-        self.swatch = tk.Label(
-            status_row, width=6, relief="solid", borderwidth=1, cursor="hand2",
-            foreground="gray50",
+        # Right-aligned to the window edge.
+        self._button(head, "SWOT", self._show_swot).pack(side="right")
+        self._button(head, "Description", self._show_description).pack(
+            side="right", padx=(0, 8)
         )
-        self.swatch.pack(side="left")
-        self.swatch.bind("<Button-1>", lambda e: self._pick_color())
-        self.clear_btn = tk.Label(status_row, text="×", cursor="hand2", background=PAGE_BG)
-        self.clear_btn.bind("<Button-1>", lambda e: self._set_color(""))
-        self._set_color(self.color)
-
-    def _set_color(self, color: str) -> None:
-        self.color = color
-        self.swatch.config(
-            background=color or self.cget("background"), text="" if color else "none"
-        )
-        if color:
-            self.clear_btn.pack(side="left", padx=6)
-        else:
-            self.clear_btn.pack_forget()
 
     def _commit(self, values: dict[str, str]) -> bool:
         """Store Description/SWOT text on its own, without this dialog's Save."""
@@ -195,13 +168,6 @@ class IdeaEditor(tk.Toplevel):
             self._show_description()
         elif target == "swot":
             self._show_swot()
-
-    def _pick_color(self) -> None:
-        _, hex_color = colorchooser.askcolor(
-            color=self.color or None, parent=self, title="Idea color"
-        )
-        if hex_color:  # None if the dialog was cancelled
-            self._set_color(hex_color.lower())
 
     def _build_criteria(self) -> None:
         outer = tk.Frame(self, background=PAGE_BG)
@@ -387,8 +353,6 @@ class IdeaEditor(tk.Toplevel):
         idea = self.idea
         idea.name = name
         idea.weights = {cid: v.get() for cid, v in self.weight_vars.items()}
-        idea.status = self.status_var.get()
-        idea.color = self.color
         for field, value in self.pending.items():
             setattr(idea, field, value)
         idea.scores = {
@@ -476,6 +440,10 @@ class _SubEditor(tk.Toplevel):
         self._close(reveal=target == "rubric")
         self._goto(target)
 
+    def request_close(self) -> None:
+        """Command-W: same as the window's close button."""
+        self._cancel()
+
     def _cancel(self) -> None:
         """The window's close button: leave, and drop an idea that isn't shown yet."""
         if self._parent._hidden:
@@ -494,7 +462,7 @@ class _SubEditor(tk.Toplevel):
 
 
 class DescriptionEditor(_SubEditor):
-    """The idea's name and its full-height long description."""
+    """The idea's name, status, color and its full-height long description."""
 
     title_text = "Description"
     other = "swot"
@@ -506,6 +474,28 @@ class DescriptionEditor(_SubEditor):
         self.name_var = tk.StringVar(value=self._parent.pending["name"])
         self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=40)
         self.name_entry.pack(side="left", padx=6)
+
+        pending = self._parent.pending
+        detail_row = tk.Frame(body, background=PAGE_BG)
+        detail_row.pack(fill="x", pady=(0, 10))
+        tk.Label(detail_row, text="Status", background=PAGE_BG).pack(side="left")
+        self.status_var = tk.StringVar(value=pending["status"])
+        ttk.Combobox(
+            detail_row, textvariable=self.status_var, values=STATUSES, state="readonly",
+            width=IdeaEditor._text_width(STATUSES),
+        ).pack(side="left", padx=6)
+        tk.Label(detail_row, text="Color", background=PAGE_BG).pack(
+            side="left", padx=(16, 6)
+        )
+        self.swatch = tk.Label(
+            detail_row, width=6, relief="solid", borderwidth=1, cursor="hand2",
+            foreground="gray50",
+        )
+        self.swatch.pack(side="left")
+        self.swatch.bind("<Button-1>", lambda e: self._pick_color())
+        self.clear_btn = tk.Label(detail_row, text="×", cursor="hand2", background=PAGE_BG)
+        self.clear_btn.bind("<Button-1>", lambda e: self._set_color(""))
+        self._set_color(pending["color"])
 
         scroll = ttk.Scrollbar(body, orient="vertical")
         outline = tk.Frame(body, background=BORDER)
@@ -520,6 +510,23 @@ class DescriptionEditor(_SubEditor):
         self.text.insert("1.0", self._parent.pending["description"])
         (self.text if self.name_var.get() else self.name_entry).focus_set()
 
+    def _set_color(self, color: str) -> None:
+        self.color = color
+        self.swatch.config(
+            background=color or PAGE_BG, text="" if color else "none"
+        )
+        if color:
+            self.clear_btn.pack(side="left", padx=6)
+        else:
+            self.clear_btn.pack_forget()
+
+    def _pick_color(self) -> None:
+        _, hex_color = colorchooser.askcolor(
+            color=self.color or None, parent=self, title="Idea color"
+        )
+        if hex_color:  # None if the dialog was cancelled
+            self._set_color(hex_color.lower())
+
     def _valid(self) -> bool:
         if self.name_var.get().strip():
             return True
@@ -528,10 +535,13 @@ class DescriptionEditor(_SubEditor):
 
     def _stash(self) -> None:
         self._parent.set_name(self.name_var.get())
+        self._parent.pending.update(status=self.status_var.get(), color=self.color)
 
     def _values(self) -> dict[str, str]:
         return {
             "name": self.name_var.get().strip(),
+            "status": self.status_var.get(),
+            "color": self.color,
             "description": self.text.get("1.0", "end").strip(),
         }
 
@@ -541,6 +551,10 @@ class SwotEditor(_SubEditor):
 
     title_text = "SWOT"
     other = "description"
+
+    def __init__(self, parent: IdeaEditor, commit, goto):
+        super().__init__(parent, commit, goto)
+        self.title(parent.pending["name"] or "New idea")  # window title: the idea's name
 
     def _build_body(self, body: tk.Frame) -> None:
         body.columnconfigure(0, weight=1)
@@ -563,6 +577,43 @@ class SwotEditor(_SubEditor):
         return {f: t.get("1.0", "end").strip() for f, t in self.texts.items()}
 
 
+class GuideWindow(tk.Toplevel):
+    """The user guide: a read-only, scrollable text. Not modal."""
+
+    CONTENT = "The user guide will go here."
+
+    def __init__(self, parent: tk.Misc):
+        super().__init__(parent)
+        self.title("Guide")
+        self.configure(background=PAGE_BG)
+        width = min(760, self.winfo_screenwidth() - 40)
+        height = min(800, self.winfo_screenheight() - 100)
+        x = (self.winfo_screenwidth() - width) // 2
+        self.geometry(f"{width}x{height}+{x}+40")
+
+        tk.Label(
+            self, text="Guide", background=PAGE_BG, font=_bold_font(), padx=10, pady=10
+        ).pack(anchor="w")
+        body = tk.Frame(self, padx=10, background=PAGE_BG)
+        body.pack(fill="both", expand=True, pady=(0, 18))
+        scroll = ttk.Scrollbar(body, orient="vertical")
+        outline = tk.Frame(body, background=BORDER)
+        self.text = tk.Text(
+            outline, wrap="word", yscrollcommand=scroll.set, borderwidth=0,
+            highlightthickness=0, font="TkDefaultFont", padx=8, pady=8,
+        )
+        scroll.config(command=self.text.yview)
+        scroll.pack(side="right", fill="y")
+        outline.pack(side="left", fill="both", expand=True)
+        self.text.pack(fill="both", expand=True, padx=1, pady=1)
+        self.text.insert("1.0", self.CONTENT)
+        self.text.config(state="disabled")  # read-only
+
+    def request_close(self) -> None:
+        """Command-W."""
+        self.destroy()
+
+
 class App(ttk.Frame):
     def __init__(self, root: tk.Tk, storage: Storage, ideas: list[Idea]):
         super().__init__(root, padding=APP_PADDING)
@@ -580,9 +631,40 @@ class App(ttk.Frame):
         file_menu.add_command(
             label="New Idea", accelerator=f"{mod}+N", command=self._new_idea_soon
         )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Close Window", accelerator=f"{mod}+W", command=self._close_window
+        )
         menubar.add_cascade(label="File", menu=file_menu)
+        guide_menu = tk.Menu(menubar, tearoff=False)
+        guide_menu.add_command(label="User Guide", command=self._show_guide_soon)
+        menubar.add_cascade(label="Guide", menu=guide_menu)
         root.config(menu=menubar)
         root.bind(f"<{mod}-n>", lambda e: self._new_idea_soon())
+        self.bind_all(f"<{mod}-w>", lambda e: self._close_window())
+
+    def _show_guide_soon(self) -> None:
+        # After the menu action returns, like _new_idea_soon.
+        self.after(50, self.show_guide)
+
+    def show_guide(self) -> None:
+        """Open the user guide, or bring it forward if it is already open."""
+        guide = getattr(self, "_guide", None)
+        if guide is not None and guide.winfo_exists():
+            guide.deiconify()
+            guide.lift()
+            return
+        self._guide = GuideWindow(self)
+
+    def _close_window(self) -> None:
+        """Close the active window: a dialog is cancelled, the main window quits."""
+        try:
+            focused = self.focus_get()
+        except KeyError:  # tkinter can't name some native popups
+            focused = None
+        window = focused.winfo_toplevel() if focused else self.grab_current()
+        window = window or self.winfo_toplevel()
+        getattr(window, "request_close", window.destroy)()
 
     def _new_idea_soon(self) -> None:
         # Not inside the menu's own callback: a modal dialog opened (and waited on)
@@ -739,6 +821,8 @@ class App(ttk.Frame):
 
     def _tip_text(self, row_id: str, col_id: str) -> str:
         idea = next((i for i in self.ideas if i.id == row_id), None)
+        if idea is not None and col_id == "name":
+            return idea.description.strip()  # no description, no tooltip
         crit = next((c for c in CRITERIA if c.id == col_id), None)
         if idea is None or crit is None:
             return ""
@@ -778,7 +862,9 @@ class App(ttk.Frame):
         tip.wm_overrideredirect(True)
         tip.configure(background="#808080")  # shows through as a 1px border
         tk.Label(
-            tip, text=text, justify="left", wraplength=360, background="#e6f3ff",
+            tip, text=text, justify="left",
+            background=TIP_BG,
+            wraplength=DESCRIPTION_TIP_W if col_id == "name" else 360,
             foreground="black", padx=6, pady=4,
         ).pack(padx=1, pady=1)
         self._move_tip(event)
