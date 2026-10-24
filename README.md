@@ -15,7 +15,7 @@ A small desktop app for scoring and comparing business ideas against a weighted 
 ## Requirements
 
 - Python 3.10 or newer, with Tkinter (included in most Python installers; on some Linux distributions install `python3-tk`)
-- No third-party runtime dependencies
+- The [`anthropic`](https://pypi.org/project/anthropic/) package, for Roast (`pip install -r requirements.txt`)
 
 ## Run
 

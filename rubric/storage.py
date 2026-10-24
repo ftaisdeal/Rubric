@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STATUSES = ("considering", "pursuing", "dropped")
 
 
@@ -85,6 +85,7 @@ class Idea:
     scores: dict[str, int] = field(default_factory=dict)
     reasons: dict[str, str] = field(default_factory=dict)
     weights: dict[str, float] = field(default_factory=dict)  # percent; {} = defaults
+    roast: dict = field(default_factory=dict)  # the last Roast verdict; {} = never roasted
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created: str = field(default_factory=_now)
     updated: str = field(default_factory=_now)
@@ -112,6 +113,7 @@ class Idea:
                 scores={str(k): int(v) for k, v in _rename_ids(data.get("scores", {})).items()},
                 reasons={str(k): str(v) for k, v in _rename_ids(data.get("reasons", {})).items()},
                 weights={str(k): float(v) for k, v in _rename_ids(data.get("weights", {})).items()},
+                roast=data["roast"] if isinstance(data.get("roast"), dict) else {},
                 created=str(data.get("created", _now())),
                 updated=str(data.get("updated", _now())),
             )

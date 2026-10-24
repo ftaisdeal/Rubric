@@ -1,3 +1,4 @@
+import os
 import stat
 import subprocess
 import tempfile
@@ -92,12 +93,14 @@ class FileFallbackTests(unittest.TestCase):
     def test_no_key_is_none(self):
         self.assertIsNone(get_key(**self.args()))
 
+    @unittest.skipUnless(os.name == "posix", "Windows has no POSIX file modes")
     def test_round_trip_and_private_mode(self):
         set_key(KEY, **self.args())
         self.assertEqual(get_key(**self.args()), KEY)
         path = self.home / ".local" / "share" / "rubric" / apikey.KEY_FILE
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    @unittest.skipUnless(os.name == "posix", "Windows has no POSIX file modes")
     def test_overwrite_tightens_an_open_file(self):
         set_key(KEY, **self.args())
         path = self.home / ".local" / "share" / "rubric" / apikey.KEY_FILE

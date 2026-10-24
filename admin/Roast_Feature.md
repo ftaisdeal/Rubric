@@ -32,21 +32,20 @@ The four answers are assembled into the single-paragraph brief that is pasted in
 
 ## Constraints and risks
 
-- **No third-party dependencies.** The README promises none, so call the API with `urllib` rather than the `anthropic` SDK (about 40 lines). Revisit if the SDK is preferred.
+- **Use the `anthropic` SDK.** Decided: it is a runtime dependency (`requirements.txt`, also installed by `build_mac.sh`). It brings automatic retries on 429/529/5xx (the five parallel calls make rate limits likely), typed errors for clear messages, shared connection handling across threads, and typed support for the web-search tool. This app is for personal use, so the old "no dependencies" promise no longer constrains the design.
 - **Threading.** Tk freezes on a blocking call. Run the calls on worker threads and return results through `after()`. Keep modal dialogs out of macOS menu callbacks (the Tk menu modal freeze).
-- **API key.** Read it from `ANTHROPIC_API_KEY`, with a fallback to a file in the app's data folder. Never store it in `ideas.json`, since that file may be shared. A GUI app launched from Finder doesn't see shell env vars, so a Settings field is probably needed.
+- **API key.** Decided and built ([rubric/apikey.py](../rubric/apikey.py)): `ANTHROPIC_API_KEY` wins, then the macOS Keychain via the `security` tool (the key goes in on stdin, never in the argument list). Other platforms fall back to a `0600` file. Never in `ideas.json`. Set or removed from File > API Key…, which never displays the key.
 - **Cost.** Each roast is six calls, one with web search: roughly a few cents to 30 cents depending on model. Show a confirm before running.
 - **Partial failure.** One failed persona should not abort the run. The Judge proceeds with the rest and says which are missing.
 
 ## Open decisions
 
 1. **Model.** Default proposal: a mid-tier model for the personas and a stronger one for the Judge.
-2. **API key.** Environment variable only, or also editable in the app?
-3. **Persistence.** Store the verdict on the idea, or only display it?
+2. **Persistence.** Store the verdict on the idea, or only display it?
 
 ## Suggested build order
 
-1. API client (`urllib`) and prompt assembly, with tests.
+1. API client (`anthropic` SDK) and prompt assembly, with tests.
 2. Council orchestration: parallel persona calls, then the Judge, with partial-failure handling.
 3. Storage fields and schema bump, with tests.
 4. Roast window and the editor button.
