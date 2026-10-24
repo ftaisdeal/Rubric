@@ -6,7 +6,7 @@ from tkinter import colorchooser, font as tkfont, messagebox, ttk
 from .guide import guide_text
 from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
-from .storage import STATUSES, SWOT_FIELDS, Idea, Storage, StorageError
+from .storage import DESCRIPTION_FIELDS, STATUSES, SWOT_FIELDS, Idea, Storage, StorageError
 
 UNSCORED = 0
 
@@ -56,6 +56,28 @@ def _titled_box(parent: tk.Misc, title: str) -> tuple[tk.Frame, ttk.Frame]:
     return outline, box
 
 
+def _text_boxes(
+    body: tk.Frame, values: dict[str, str], fields, titles: dict[str, str],
+    first_row: int = 0,
+) -> dict[str, tk.Text]:
+    """One titled, equal-height text box per field, stacked down `body`."""
+    body.columnconfigure(0, weight=1)
+    texts: dict[str, tk.Text] = {}
+    for row, field in enumerate(fields, start=first_row):
+        body.rowconfigure(row, weight=1, uniform="boxes")
+        outline, box = _titled_box(body, titles[field])
+        outline.grid(row=row, column=0, sticky="nsew", pady=3)
+        # The focus ring is the Text's highlight: 1px, and light (white when idle).
+        text = tk.Text(
+            box, wrap="word", height=3, borderwidth=0, highlightthickness=1,
+            highlightbackground="white", highlightcolor=FOCUS_RING,
+        )
+        text.insert("1.0", values[field])
+        text.pack(fill="both", expand=True)
+        texts[field] = text
+    return texts
+
+
 class IdeaEditor(tk.Toplevel):
     """Modal dialog for creating or editing one idea."""
 
@@ -81,7 +103,10 @@ class IdeaEditor(tk.Toplevel):
         self.saved = False
         self.deleted = False
         # Name, status, color, description and SWOT text; written to the idea by this dialog's Save.
-        self.pending = {f: getattr(idea, f) for f in ("name", "status", "color", "description", *SWOT_FIELDS)}
+        self.pending = {
+            f: getattr(idea, f)
+            for f in ("name", "status", "color", *DESCRIPTION_FIELDS, *SWOT_FIELDS)
+        }
         self.title(idea.name or "New idea")
         width = min(860, self.winfo_screenwidth() - 40)
         height = self.winfo_screenheight()
@@ -367,6 +392,13 @@ class IdeaEditor(tk.Toplevel):
         self.destroy()
 
 
+DESCRIPTION_TITLES = {
+    "concept": "The idea",
+    "customer": "Who it's for and how it makes money",
+    "edge": "Your edge",
+    "constraints": "Constraints",
+}
+
 NO_COLOR = "#9ca3af"  # bar color for ideas with no color chosen
 
 
@@ -379,7 +411,7 @@ class _SubEditor(tk.Toplevel):
 
     title_text = ""
     show_heading = True  # False where the window title already says it
-    other = ""  # the sibling display offered next to "Rubric": "description" or "swot"
+    other = ""  # the sibling display offered next to "Rubric": "settings" or "swot"
 
     def __init__(self, parent: IdeaEditor, commit, goto):
         super().__init__(parent.master)
@@ -411,6 +443,7 @@ class _SubEditor(tk.Toplevel):
         bottom = tk.Frame(self, padx=10, background=PAGE_BG)
         bottom.pack(side="bottom", fill="x", pady=(8, 18))
         IdeaEditor._button(bottom, "Save", self._save).pack(side="left")
+        self._build_bottom(bottom)
 
         body = tk.Frame(self, padx=10, background=PAGE_BG)
         body.pack(fill="both", expand=True)
@@ -421,6 +454,9 @@ class _SubEditor(tk.Toplevel):
 
     def _build_body(self, body: tk.Frame) -> None:
         raise NotImplementedError
+
+    def _build_bottom(self, bottom: tk.Frame) -> None:
+        """Add anything else to the bottom row, beside Save."""
 
     def _values(self) -> dict[str, str]:
         raise NotImplementedError
@@ -463,7 +499,7 @@ class _SubEditor(tk.Toplevel):
 
 
 class SettingsEditor(_SubEditor):
-    """The idea's name, status, color and its full-height long description."""
+    """The idea's name, status, color and its four-part description."""
 
     title_text = "Settings"
     show_heading = False  # the window title is "Settings"
@@ -479,8 +515,8 @@ class SettingsEditor(_SubEditor):
         self.name_entry.pack(side="left", padx=6)
 
         pending = self._parent.pending
+        body.columnconfigure(0, weight=1)
         detail_row = tk.Frame(body, background=PAGE_BG)
-        detail_row.pack(fill="x", pady=(0, 10))
         tk.Label(detail_row, text="Status", background=PAGE_BG).pack(side="left")
         self.status_var = tk.StringVar(value=pending["status"])
         ttk.Combobox(
@@ -500,18 +536,27 @@ class SettingsEditor(_SubEditor):
         self.clear_btn.bind("<Button-1>", lambda e: self._set_color(""))
         self._set_color(pending["color"])
 
-        scroll = ttk.Scrollbar(body, orient="vertical")
-        outline = tk.Frame(body, background=BORDER)
-        self.text = tk.Text(
-            outline, wrap="word", yscrollcommand=scroll.set, borderwidth=0,
-            highlightthickness=0, font="TkDefaultFont",
+        detail_row.grid(row=0, column=0, sticky="ew", pady=(0, 7))
+        self.texts = _text_boxes(
+            body, self._parent.pending, DESCRIPTION_FIELDS, DESCRIPTION_TITLES, first_row=1
         )
-        scroll.config(command=self.text.yview)
-        scroll.pack(side="right", fill="y")
-        outline.pack(side="left", fill="both", expand=True)
-        self.text.pack(fill="both", expand=True, padx=1, pady=1)  # 1px border
-        self.text.insert("1.0", self._parent.pending["description"])
-        (self.text if self.name_var.get() else self.name_entry).focus_set()
+        (
+            self.texts[DESCRIPTION_FIELDS[0]] if self.name_var.get() else self.name_entry
+        ).focus_set()
+
+    def _build_bottom(self, bottom: tk.Frame) -> None:
+        # Centered in the row; Save stays at the left.
+        IdeaEditor._button(bottom, "Roast", self._roast).place(
+            relx=0.5, rely=0.5, anchor="center"
+        )
+
+    def _roast(self) -> None:
+        # Deferred so the dialog doesn't open from inside the button's own callback.
+        self.after_idle(
+            lambda: messagebox.showinfo(
+                "Roast", "Roast isn't available yet.", parent=self
+            )
+        )
 
     def _set_color(self, color: str) -> None:
         self.color = color
@@ -545,7 +590,7 @@ class SettingsEditor(_SubEditor):
             "name": self.name_var.get().strip(),
             "status": self.status_var.get(),
             "color": self.color,
-            "description": self.text.get("1.0", "end").strip(),
+            **{f: t.get("1.0", "end").strip() for f, t in self.texts.items()},
         }
 
 
@@ -560,20 +605,9 @@ class SwotEditor(_SubEditor):
         self.title(parent.pending["name"] or "New idea")  # window title: the idea's name
 
     def _build_body(self, body: tk.Frame) -> None:
-        body.columnconfigure(0, weight=1)
-        self.texts: dict[str, tk.Text] = {}
-        for row, field in enumerate(SWOT_FIELDS):
-            body.rowconfigure(row, weight=1, uniform="swot")
-            outline, box = _titled_box(body, field.capitalize())
-            outline.grid(row=row, column=0, sticky="nsew", pady=3)
-            # The focus ring is the Text's highlight: 1px, and light (white when idle).
-            text = tk.Text(
-                box, wrap="word", height=3, borderwidth=0, highlightthickness=1,
-                highlightbackground="white", highlightcolor=FOCUS_RING,
-            )
-            text.insert("1.0", self._parent.pending[field])
-            text.pack(fill="both", expand=True)
-            self.texts[field] = text
+        self.texts = _text_boxes(
+            body, self._parent.pending, SWOT_FIELDS, {f: f.capitalize() for f in SWOT_FIELDS}
+        )
         self.texts[SWOT_FIELDS[0]].focus_set()
 
     def _values(self) -> dict[str, str]:
@@ -848,7 +882,7 @@ class App(ttk.Frame):
     def _tip_text(self, row_id: str, col_id: str) -> str:
         idea = next((i for i in self.ideas if i.id == row_id), None)
         if idea is not None and col_id == "name":
-            return idea.description.strip()  # no description, no tooltip
+            return idea.concept.strip()  # no concept, no tooltip
         crit = next((c for c in CRITERIA if c.id == col_id), None)
         if idea is None or crit is None:
             return ""

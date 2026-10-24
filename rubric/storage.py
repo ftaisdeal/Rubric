@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATUSES = ("considering", "pursuing", "dropped")
 
 
@@ -63,13 +63,19 @@ def _valid_color(value) -> str:
     return ""
 
 
+# The four-part description of an idea, as the Roast council needs it.
+DESCRIPTION_FIELDS = ("concept", "customer", "edge", "constraints")
+
 SWOT_FIELDS = ("strengths", "weaknesses", "opportunities", "threats")
 
 
 @dataclass
 class Idea:
     name: str
-    description: str = ""
+    concept: str = ""  # what the idea is and does
+    customer: str = ""  # who it is for, and how it makes money
+    edge: str = ""  # your relevant skills, audience, assets
+    constraints: str = ""  # budget, timeline, time to first dollar
     strengths: str = ""
     weaknesses: str = ""
     opportunities: str = ""
@@ -92,7 +98,11 @@ class Idea:
             return cls(
                 id=str(data["id"]),
                 name=str(data["name"]),
-                description=str(data.get("description", "")),
+                # Schema 1 had one free-text "description"; it becomes the concept.
+                concept=str(data.get("concept", data.get("description", ""))),
+                customer=str(data.get("customer", "")),
+                edge=str(data.get("edge", "")),
+                constraints=str(data.get("constraints", "")),
                 strengths=str(data.get("strengths", "")),
                 weaknesses=str(data.get("weaknesses", "")),
                 opportunities=str(data.get("opportunities", "")),

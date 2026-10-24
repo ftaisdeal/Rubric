@@ -19,7 +19,10 @@ class StorageTests(unittest.TestCase):
     def test_round_trip(self):
         idea = Idea(
             name="Widget",
-            description="d",
+            concept="c",
+            customer="u",
+            edge="e",
+            constraints="k",
             strengths="s",
             weaknesses="w",
             opportunities="o",
@@ -43,6 +46,22 @@ class StorageTests(unittest.TestCase):
             (loaded.strengths, loaded.weaknesses, loaded.opportunities, loaded.threats),
             ("", "", "", ""),
         )
+
+    def test_schema_1_description_becomes_concept(self):
+        self.storage.save([Idea(name="old")])
+        data = json.loads(self.path.read_text())
+        idea = data["ideas"][0]
+        for f in ("concept", "customer", "edge", "constraints"):
+            del idea[f]
+        idea["description"] = "a long note"
+        data["schema_version"] = 1
+        self.path.write_text(json.dumps(data))
+        [loaded] = self.storage.load()
+        self.assertEqual(
+            (loaded.concept, loaded.customer, loaded.edge, loaded.constraints),
+            ("a long note", "", "", ""),
+        )
+        self.assertFalse(hasattr(loaded, "description"))
 
     def test_writes_schema_version(self):
         self.storage.save([])

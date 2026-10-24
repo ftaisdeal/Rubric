@@ -14,7 +14,7 @@ Rubric helps you compare business ideas fairly. You describe each idea, score it
 ## Getting started
 
 1. Choose File > New Idea (Command+N).
-2. In the Settings display, type a name, pick a status and a color if you like, and write a description. Click Save.
+2. In the Settings display, type a name, pick a status and a color if you like, and fill in the four description boxes. Click Save.
 3. The rubric display opens next. Score the idea on each criterion, then click Save.
 4. The idea appears in the main window, ranked with your other ideas.
 
@@ -35,7 +35,7 @@ Each idea is edited in three displays. Use the buttons in the top right corner o
 
 ### Settings
 
-This is where an idea starts. It holds the idea's name, its status (considering, pursuing or dropped), its color, and a long description. The color is used for the idea's bar in the main window. Click the color swatch to choose a color, or click the small × beside it to clear the color.
+This is where an idea starts. It holds the idea's name, its status (considering, pursuing or dropped), its color, and a four-part description: the idea itself, who it is for and how it makes money, your edge (the skills, audience or assets you bring), and your constraints (budget, timeline, how soon you need the first dollar). Only the name is required. The color is used for the idea's bar in the main window. Click the color swatch to choose a color, or click the small × beside it to clear the color.
 
 An idea must have a name. Click Save to store these details.
 
