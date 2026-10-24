@@ -1016,7 +1016,7 @@ def _center(root: tk.Tk, width: int, height: int) -> int:
 
 def main() -> None:
     root = tk.Tk()
-    root.title("Business Evaluation Rubric")
+    root.title("Rubric Business Evaluation")
     window_width = _center(root, _table_width(), 480)
     storage = Storage()
     try:
