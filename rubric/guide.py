@@ -20,7 +20,7 @@ Rubric helps you compare business ideas fairly. You describe each idea, score it
 
 ## The main window
 
-The main window is a table with one row per idea. The columns are the idea's name, its status, its total score, a small bar chart of the total, and one column for each criterion.
+The main window is a table with one row per idea. The columns are the idea's name, its status, its Roast verdict (GO, RESHAPE or KILL, blank if it has never been roasted), its total score, a small bar chart of the total, and one column for each criterion.
 
 - Total: a score from 0 to 100. It reads "incomplete" until the idea has a score for every criterion.
 - The bar beside the total shows the same score as a bar in the idea's color, which makes ideas easy to compare at a glance.
@@ -38,6 +38,12 @@ Each idea is edited in three displays. Use the buttons in the top right corner o
 This is where an idea starts. It holds the idea's name, its status (considering, pursuing or dropped), its color, and a four-part description: the idea itself, who it is for and how it makes money, your edge (the skills, audience or assets you bring), and your constraints (budget, timeline, how soon you need the first dollar). Only the name is required. The color is used for the idea's bar in the main window. Click the color swatch to choose a color, or click the small × beside it to clear the color.
 
 An idea must have a name. Click Save to store these details.
+
+### Roast
+
+The Roast button at the bottom of the Settings display asks a council of five (a Contrarian, an Expansionist, a Logician, a Researcher and a Buyer) to attack and defend the idea, then a Judge gives one verdict: GO, RESHAPE or KILL, with the cheapest 48-hour test of the riskiest assumption. It needs all four description boxes filled in, and an API key (File > API Key…).
+
+A roast costs roughly 10 to 30 cents, so Rubric asks first. It saves your Settings changes before it starts, and stores the result on the idea. If the idea has been roasted before, the Roast button shows the last result instead; "Roast again" in that window runs a fresh one.
 
 ### Rubric
 

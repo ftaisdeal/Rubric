@@ -1,11 +1,13 @@
 """Tkinter desktop UI: comparison table and idea editor."""
 
 import os
+import queue
 import sys
+import threading
 import tkinter as tk
 from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
-from . import apikey
+from . import apikey, roast
 from .guide import guide_text
 from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
@@ -28,7 +30,7 @@ PALETTE = (
 DELETE_FG = "#e57f7f"  # pastel red text for the editor's Delete button
 
 # Fixed column widths of the comparison table, and the frame padding around it.
-NAME_W, STATUS_W, TOTAL_W, CRITERION_W = 160, 95, 80, 115
+NAME_W, STATUS_W, VERDICT_W, TOTAL_W, CRITERION_W = 160, 95, 90, 80, 115
 BAR_W = 100  # the in-table bar chart column
 BAR_PAD = 4  # space around each bar inside that column
 APP_PADDING = 10
@@ -108,7 +110,7 @@ class IdeaEditor(tk.Toplevel):
         # Name, status, color, description and SWOT text; written to the idea by this dialog's Save.
         self.pending = {
             f: getattr(idea, f)
-            for f in ("name", "status", "color", *DESCRIPTION_FIELDS, *SWOT_FIELDS)
+            for f in ("name", "status", "color", *DESCRIPTION_FIELDS, *SWOT_FIELDS, "roast")
         }
         self.title(idea.name or "New idea")
         width = min(860, self.winfo_screenwidth() - 40)
@@ -554,12 +556,35 @@ class SettingsEditor(_SubEditor):
         )
 
     def _roast(self) -> None:
-        # Deferred so the dialog doesn't open from inside the button's own callback.
+        # Deferred so the window doesn't open from inside the button's own callback.
         self.after_idle(
-            lambda: messagebox.showinfo(
-                "Roast", "Roast isn't available yet.", parent=self
+            lambda: RoastWindow(
+                self, self._parent.pending["roast"], self._prepare_roast, self._commit
             )
         )
+
+    def _prepare_roast(self) -> Idea | None:
+        """Check the idea is ready to roast and store what is on screen.
+
+        Returns the idea as it now stands, or None (after saying why).
+        """
+        values = self._values()
+        if not values["name"]:
+            messagebox.showwarning("Name required", "Give the idea a name.", parent=self)
+            return None
+        snapshot = Idea(
+            **{f: values[f] for f in ("name", "status", "color", *DESCRIPTION_FIELDS)}
+        )
+        missing = roast.missing_fields(snapshot)
+        if missing:
+            messagebox.showwarning(
+                "Fill in the description",
+                "A roast needs all four boxes. Still empty:\n\n" + "\n".join(missing),
+                parent=self,
+            )
+            return None
+        # The roast judges what is stored, so store the screen first.
+        return snapshot if self._commit(values) else None
 
     def _set_color(self, color: str) -> None:
         self.color = color
@@ -675,6 +700,227 @@ class GuideWindow(tk.Toplevel):
     def request_close(self) -> None:
         """Command-W."""
         self.destroy()
+
+
+VERDICT_FG = {"GO": "#15803d", "RESHAPE": "#b45309", "KILL": "#b91c1c"}
+STATE_MARK = {"waiting": "·", "working": "…", "done": "✓", "failed": "✗"}
+COST_NOTE = (
+    "A roast makes six calls to Claude, one of them with web search, and costs "
+    "roughly 10 to 30 cents.\n\nRun it?"
+)
+
+
+class RoastWindow(tk.Toplevel):
+    """Runs the Roast council on an idea and shows the verdict. Modal over Settings.
+
+    `prepare() -> Idea | None` checks and stores the idea before a run; `commit(values)`
+    stores the result on it. The council runs on a worker thread; it talks to the UI
+    only through a queue that this window polls.
+    """
+
+    NAMES = [p.name for p in roast.PERSONAS] + ["Judge"]
+
+    def __init__(self, parent: "SettingsEditor", previous: dict, prepare, commit):
+        super().__init__(parent)
+        self._settings = parent
+        self._prepare = prepare
+        self._commit = commit
+        self._result = previous
+        self._running = False
+        self._queue: queue.Queue = queue.Queue()
+        self.title("Roast")
+        self.configure(background=PAGE_BG)
+        self.geometry(parent.geometry())
+        self.transient(parent)
+
+        top = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
+        top.pack(fill="x")
+        tk.Label(top, text="Roast", background=PAGE_BG, font=_bold_font()).pack(side="left")
+        self.run_btn = IdeaEditor._button(top, "Roast again", self._start)
+        self.run_btn.pack(side="right")
+
+        bottom = tk.Frame(self, padx=10, background=PAGE_BG)
+        bottom.pack(side="bottom", fill="x", pady=(8, 18))
+        IdeaEditor._button(bottom, "Close", self.request_close).pack(side="left")
+        self.status = tk.Label(bottom, background=PAGE_BG, foreground="gray40")
+        self.status.pack(side="left", padx=12)
+
+        self.progress = tk.Frame(self, padx=10, background=PAGE_BG)
+        self.marks = {}
+        for name in self.NAMES:
+            row = tk.Frame(self.progress, background=PAGE_BG)
+            row.pack(anchor="w")
+            mark = tk.Label(row, width=2, background=PAGE_BG)
+            mark.pack(side="left")
+            tk.Label(row, text=name, background=PAGE_BG).pack(side="left")
+            self.marks[name] = mark
+
+        body = tk.Frame(self, padx=10, background=PAGE_BG)
+        body.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(body, orient="vertical")
+        outline = tk.Frame(body, background=BORDER)
+        self.text = tk.Text(
+            outline, wrap="word", yscrollcommand=scroll.set, borderwidth=0,
+            highlightthickness=0, font="TkDefaultFont", padx=10, pady=8, state="disabled",
+        )
+        scroll.config(command=self.text.yview)
+        scroll.pack(side="right", fill="y")
+        outline.pack(side="left", fill="both", expand=True)
+        self.text.pack(fill="both", expand=True, padx=1, pady=1)
+        self._configure_tags()
+
+        self.protocol("WM_DELETE_WINDOW", self.request_close)
+        self.bind("<Escape>", lambda e: self.request_close())
+        self.grab_set()
+        if previous:
+            self._show(previous)
+        else:
+            self.run_btn.config(text="Roast")
+            self.after(50, self._start)  # a first roast starts straight away
+
+    def _configure_tags(self) -> None:
+        base = tkfont.nametofont("TkDefaultFont")
+        size = base.cget("size")
+        self._fonts = []  # keep references: Tk drops fonts nobody holds
+        for tag, delta, weight in (("h2", 4, "bold"), ("h3", 1, "bold"), ("bold", 0, "bold")):
+            font = base.copy()
+            font.configure(weight=weight, size=size + delta if size > 0 else size - delta)
+            self._fonts.append(font)
+            self.text.tag_configure(tag, font=font)
+        self.text.tag_configure("h2", spacing1=10, spacing3=4)
+        self.text.tag_configure("h3", spacing1=14, spacing3=2)
+        self.text.tag_configure("note", foreground="gray40")
+        self.text.tag_configure("error", foreground="#b91c1c")
+        for verdict, color in VERDICT_FG.items():
+            self.text.tag_configure(verdict, foreground=color)
+
+    def request_close(self) -> None:
+        """Command-W, Escape, the close button."""
+        if self._running and not messagebox.askyesno(
+            "Roast running",
+            "A roast is still running. Closing now discards its result "
+            "(the calls already made are still billed).\n\nClose anyway?",
+            parent=self,
+        ):
+            return
+        self._running = False  # the poll loop stops; late results are ignored
+        self.destroy()
+        self._settings.grab_set()  # hand the modal grab back to Settings
+
+    # -- running ---------------------------------------------------------------
+
+    def _start(self) -> None:
+        if self._running:
+            return
+        idea = self._prepare()
+        if idea is None:
+            if not self._result:
+                self.request_close()  # nothing to show, nothing started
+            return
+        if not messagebox.askyesno("Run a roast?", COST_NOTE, parent=self):
+            if not self._result:
+                self.request_close()
+            return
+        self._running = True
+        self.run_btn.config(state="disabled")
+        self._set_text("")
+        self.status.config(text="Convening the council…")
+        for mark in self.marks.values():
+            mark.config(text=STATE_MARK["waiting"])
+        self.progress.pack(fill="x", before=self.text.master.master, pady=(0, 8))
+        threading.Thread(target=self._work, args=(idea,), daemon=True).start()
+        self.after(100, self._poll)
+
+    def _work(self, idea: Idea) -> None:
+        """Worker thread: no Tk calls in here, only the queue."""
+        try:
+            result = roast.run_council(
+                idea, on_progress=lambda who, state: self._queue.put(("progress", who, state))
+            )
+        except roast.RoastError as e:
+            self._queue.put(("error", str(e)))
+        except Exception as e:  # keep the window from waiting forever
+            self._queue.put(("error", f"Unexpected error: {type(e).__name__}"))
+        else:
+            self._queue.put(("done", result.to_dict()))
+
+    def _poll(self) -> None:
+        if not self._running:
+            return
+        try:
+            while True:
+                kind, *rest = self._queue.get_nowait()
+                if kind == "progress":
+                    who, state = rest
+                    self.marks[who].config(text=STATE_MARK[state])
+                else:
+                    self._finish(kind, rest[0])
+                    return
+        except queue.Empty:
+            pass
+        self.after(100, self._poll)
+
+    def _finish(self, kind: str, payload) -> None:
+        self._running = False
+        self.progress.pack_forget()
+        self.run_btn.config(state="normal", text="Roast again")
+        if kind == "error":
+            self.status.config(text="")
+            if self._result:
+                self._show(self._result)  # the earlier roast is still on the idea
+            self._append(f"The roast failed: {payload}\n\n", "error", at_top=True)
+            return
+        self._result = payload
+        self._show(payload)
+        saved = self._commit({"roast": payload})
+        self.status.config(text="Saved to the idea." if saved else "Couldn't save the result.")
+
+    # -- showing ---------------------------------------------------------------
+
+    def _set_text(self, content: str) -> None:
+        self.text.config(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", content)
+        self.text.config(state="disabled")
+
+    def _append(self, content: str, *tags: str, at_top: bool = False) -> None:
+        self.text.config(state="normal")
+        self.text.insert("1.0" if at_top else "end", content, tags)
+        self.text.config(state="disabled")
+
+    def _markdown(self, content: str, verdict: str = "") -> None:
+        """Insert the model's markdown: headings and **bold**, nothing else."""
+        for line in content.splitlines():
+            tag = ""
+            for prefix, name in (("### ", "h3"), ("## ", "h2")):
+                if line.startswith(prefix):
+                    line, tag = line[len(prefix):], name
+                    break
+            if tag == "h2" and verdict:
+                self._append(line + "\n", "h2", verdict)
+                continue
+            for i, piece in enumerate(line.split("**")):
+                if piece:
+                    self._append(piece, *(("bold",) if i % 2 else ()), *((tag,) if tag else ()))
+            self._append("\n")
+
+    def _show(self, result: dict) -> None:
+        self._set_text("")
+        self.status.config(text="")
+        verdict = result.get("verdict", "")
+        self._markdown(result.get("report", ""), verdict)
+        scores = result.get("scores", {})
+        if scores:
+            line = " · ".join(f"{n} {s}/10" for n, s in scores.items())
+            self._append("\n" + line + "\n", "note")
+        failed = result.get("failed", {})
+        for name, why in failed.items():
+            self._append(f"{name} didn't report: {why}\n", "note")
+        self._append("\nThe council\n", "h2")
+        for name, report in result.get("reports", {}).items():
+            self._append(name + "\n", "h3")
+            self._markdown(report)
+        self.text.yview_moveto(0)
 
 
 class ApiKeyWindow(tk.Toplevel):
@@ -840,15 +1086,16 @@ class App(ttk.Frame):
     def _build(self) -> None:
         self._build_menu()
 
-        cols = ("name", "status", "total", "bars") + tuple(c.id for c in CRITERIA)
+        cols = ("name", "status", "verdict", "total", "bars") + tuple(c.id for c in CRITERIA)
         self.tree = ttk.Treeview(
             self, columns=cols, show="headings", selectmode="browse"
         )
         self.sort_col, self.sort_desc = "total", True
-        self._heading_text = {"name": "Idea", "status": "Status", "total": "Total"}
+        self._heading_text = {"name": "Idea", "status": "Status", "verdict": "Roast", "total": "Total"}
         self._heading_text.update({c.id: c.name for c in CRITERIA})
         self.tree.column("name", width=NAME_W, minwidth=160)
         self.tree.column("status", width=STATUS_W, anchor="w")
+        self.tree.column("verdict", width=VERDICT_W, anchor="w")
         self.tree.column("total", width=TOTAL_W, anchor="center")
         self.tree.column("bars", width=BAR_W, minwidth=BAR_W, stretch=False)
         for c in CRITERIA:
@@ -929,8 +1176,8 @@ class App(ttk.Frame):
         if col == self.sort_col:
             self.sort_desc = not self.sort_desc
         else:
-            # Scores and totals start high-to-low; text columns A-Z.
-            self.sort_col, self.sort_desc = col, col not in ("name", "status")
+            # Scores and totals start high-to-low; text columns A-Z; verdicts GO first.
+            self.sort_col, self.sort_desc = col, col not in ("name", "status", "verdict")
         self._update_headings()
         self.refresh()
 
@@ -947,7 +1194,10 @@ class App(ttk.Frame):
             if self.sort_col == "status":
                 return (False, STATUSES.index(idea.status) if idea.status in STATUSES
                         else len(STATUSES), idea.name.lower())
-            if self.sort_col == "total":
+            if self.sort_col == "verdict":
+                verdict = idea.roast.get("verdict")
+                value = roast.VERDICTS.index(verdict) if verdict in roast.VERDICTS else None
+            elif self.sort_col == "total":
                 value = total_score(idea.scores, idea.weights)
             else:
                 value = idea.scores.get(self.sort_col)
@@ -966,6 +1216,7 @@ class App(ttk.Frame):
             row = [
                 idea.name,
                 idea.status,
+                idea.roast.get("verdict", ""),
                 "incomplete" if total is None else f"{total:.1f}",
                 "",
             ]
@@ -979,7 +1230,7 @@ class App(ttk.Frame):
 
     def fit_columns(self, window_width: int) -> None:
         """Shrink the criterion columns so the table never exceeds the window."""
-        fixed = NAME_W + STATUS_W + TOTAL_W + BAR_W
+        fixed = NAME_W + STATUS_W + VERDICT_W + TOTAL_W + BAR_W
         spare = window_width - 2 * APP_PADDING - TREE_SLACK - fixed
         width = max(60, min(CRITERION_W, spare // len(CRITERIA)))
         for c in CRITERIA:
@@ -989,6 +1240,9 @@ class App(ttk.Frame):
         idea = next((i for i in self.ideas if i.id == row_id), None)
         if idea is not None and col_id == "name":
             return idea.concept.strip()  # no concept, no tooltip
+        if idea is not None and col_id == "verdict":
+            confidence = idea.roast.get("confidence")
+            return f"Confidence: {confidence}" if confidence else ""
         crit = next((c for c in CRITERIA if c.id == col_id), None)
         if idea is None or crit is None:
             return ""
@@ -1137,7 +1391,7 @@ class App(ttk.Frame):
 
 def _table_width() -> int:
     """Window width that exactly fits the comparison table at full column widths."""
-    cols = NAME_W + STATUS_W + TOTAL_W + BAR_W + CRITERION_W * len(CRITERIA)
+    cols = NAME_W + STATUS_W + VERDICT_W + TOTAL_W + BAR_W + CRITERION_W * len(CRITERIA)
     return cols + 2 * APP_PADDING + TREE_SLACK
 
 
