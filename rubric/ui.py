@@ -11,6 +11,7 @@ UNSCORED = 0
 
 # Editor background; lighter than the aspect boxes so they stand out.
 PAGE_BG = "#f8f8f8"
+BORDER = "#cfcfcf"  # 1px outline of the aspect boxes and the description text
 
 # Colors offered to new ideas, cycled in order.
 PALETTE = (
@@ -30,12 +31,22 @@ TREE_SLACK = 6  # the Treeview's own border
 class IdeaEditor(tk.Toplevel):
     """Modal dialog for creating or editing one idea."""
 
-    def __init__(self, parent: tk.Misc, idea: Idea, can_delete: bool = False):
+    def __init__(
+        self, parent: tk.Misc, idea: Idea, can_delete: bool = False,
+        save_description=None,
+    ):
+        """`save_description(text) -> bool` writes just the description to storage.
+
+        It is None for an idea that isn't stored yet; the description is then kept
+        with the idea and stored when the idea itself is first saved.
+        """
         super().__init__(parent)
         self.idea = idea
         self.can_delete = can_delete
+        self._save_description = save_description
         self.saved = False
         self.deleted = False
+        self.description = idea.description  # pending; committed by this dialog's Save
         self.title(idea.name or "New idea")
         width = min(860, self.winfo_screenwidth() - 40)
         height = self.winfo_screenheight()
@@ -47,6 +58,7 @@ class IdeaEditor(tk.Toplevel):
         self._build_header()
         self._build_criteria()
         self._build_buttons()
+        self._fit_height()
 
         self.grab_set()
         self.name_entry.focus_set()
@@ -78,9 +90,12 @@ class IdeaEditor(tk.Toplevel):
         name_row.grid(row=0, column=1, sticky="w", padx=6, pady=2)
         self.name_entry = ttk.Entry(name_row, textvariable=self.name_var, width=40)
         self.name_entry.pack(side="left")
+        # Right-aligned to the window edge, in a column of their own.
+        links = tk.Frame(head, background=PAGE_BG)
+        links.grid(row=0, column=2, sticky="e", pady=2)
+        self._button(links, "Description", self._edit_description).pack(side="left")
         # Not wired up yet.
-        for label in ("Description", "Rubric", "SWOT"):
-            self._button(name_row, label).pack(side="left", padx=(8, 0))
+        self._button(links, "SWOT").pack(side="left", padx=(8, 0))
 
         tk.Label(head, text="Status", background=PAGE_BG).grid(row=1, column=0, sticky="w")
         status_row = tk.Frame(head, background=PAGE_BG)
@@ -113,6 +128,15 @@ class IdeaEditor(tk.Toplevel):
         else:
             self.clear_btn.pack_forget()
 
+    def _edit_description(self) -> None:
+        def save(text: str) -> bool:
+            if self._save_description and not self._save_description(text):
+                return False
+            self.description = text
+            return True
+
+        DescriptionEditor(self, self.description, save)
+
     def _pick_color(self) -> None:
         _, hex_color = colorchooser.askcolor(
             color=self.color or None, parent=self, title="Idea color"
@@ -141,6 +165,16 @@ class IdeaEditor(tk.Toplevel):
         self.reason_texts: dict[str, tk.Text] = {}
         for c in CRITERIA:
             self._build_criterion(body, c)
+        self._criteria_outer = outer
+        self._criteria_canvas, self._criteria_body = canvas, body
+
+    def _fit_height(self) -> None:
+        """Shrink the window to its content so no blank gap opens above the buttons."""
+        self.update_idletasks()
+        self._criteria_canvas.configure(height=self._criteria_body.winfo_reqheight())
+        self.update_idletasks()
+        height = min(self.winfo_reqheight(), self.winfo_screenheight() - 60)
+        self.geometry(f"{self.winfo_width()}x{height}")
 
     def _enable_wheel_scroll(self, canvas: tk.Canvas) -> None:
         """Scroll the criteria with the mouse wheel / trackpad, anywhere in the dialog."""
@@ -170,7 +204,7 @@ class IdeaEditor(tk.Toplevel):
         if not hasattr(self, "_bold_font"):
             self._bold_font = tkfont.nametofont("TkDefaultFont").copy()
             self._bold_font.configure(weight="bold")
-        border = tk.Frame(parent, background="#cfcfcf")  # 1px light outline
+        border = tk.Frame(parent, background=BORDER)
         border.pack(fill="x", pady=3)
         box = ttk.Frame(border, padding=8)
         box.pack(fill="x", padx=1, pady=1)
@@ -226,8 +260,10 @@ class IdeaEditor(tk.Toplevel):
         refresh()
 
     def _build_buttons(self) -> None:
-        bar = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
-        bar.pack(fill="x")
+        bar = tk.Frame(self, padx=10, background=PAGE_BG)
+        # Packed ahead of the criteria so that, when the window is too short, the
+        # scrolling criteria shrink instead of squashing these buttons.
+        bar.pack(side="bottom", fill="x", pady=(2, 10), before=self._criteria_outer)
         self._button(bar, "Save", self._save).pack(side="left")
         self._button(bar, "Cancel", self.destroy).pack(side="left", padx=6)
         if self.can_delete:
@@ -295,6 +331,7 @@ class IdeaEditor(tk.Toplevel):
         idea.weights = {cid: v.get() for cid, v in self.weight_vars.items()}
         idea.status = self.status_var.get()
         idea.color = self.color
+        idea.description = self.description
         idea.scores = {
             cid: v.get() for cid, v in self.score_vars.items() if v.get() != UNSCORED
         }
@@ -309,6 +346,62 @@ class IdeaEditor(tk.Toplevel):
 
 
 NO_COLOR = "#9ca3af"  # bar color for ideas with no color chosen
+
+
+class DescriptionEditor(tk.Toplevel):
+    """Full-height editor for an idea's long description."""
+
+    def __init__(self, parent: tk.Toplevel, text: str, on_save):
+        super().__init__(parent)
+        self._parent = parent
+        self._on_save = on_save
+        self.title("Description")
+        self.configure(background=PAGE_BG)
+        width, height = parent.winfo_width(), parent.winfo_height()
+        self.geometry(f"{width}x{height}+{parent.winfo_x()}+{parent.winfo_y()}")
+        self.transient(parent)
+
+        top = tk.Frame(self, padx=10, pady=10, background=PAGE_BG)
+        top.pack(fill="x")
+        self._bold_font = tkfont.nametofont("TkDefaultFont").copy()
+        self._bold_font.configure(weight="bold")
+        tk.Label(
+            top, text="Description", background=PAGE_BG, font=self._bold_font
+        ).pack(side="left")
+        # Right-aligned; packed right-to-left, so SWOT first.
+        IdeaEditor._button(top, "SWOT").pack(side="right")  # not wired up yet
+        IdeaEditor._button(top, "Rubric", self._close).pack(side="right", padx=(0, 8))
+
+        # Packed before the text so a short window shrinks the text, not the button.
+        bottom = tk.Frame(self, padx=10, background=PAGE_BG)
+        bottom.pack(side="bottom", fill="x", pady=(8, 18))
+        IdeaEditor._button(bottom, "Save", self._save).pack(side="left")
+
+        body = tk.Frame(self, padx=10, background=PAGE_BG)
+        body.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(body, orient="vertical")
+        outline = tk.Frame(body, background=BORDER)
+        self.text = tk.Text(
+            outline, wrap="word", yscrollcommand=scroll.set, borderwidth=0,
+            highlightthickness=0,
+        )
+        scroll.config(command=self.text.yview)
+        scroll.pack(side="right", fill="y")
+        outline.pack(side="left", fill="both", expand=True)
+        self.text.pack(fill="both", expand=True, padx=1, pady=1)  # 1px border
+        self.text.insert("1.0", text)
+
+        self.grab_set()
+        self.text.focus_set()
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _save(self) -> None:
+        if self._on_save(self.text.get("1.0", "end").strip()):
+            self._close()
+
+    def _close(self) -> None:
+        self.destroy()
+        self._parent.grab_set()  # hand the modal grab back to the idea dialog
 
 
 class App(ttk.Frame):
@@ -550,8 +643,10 @@ class App(ttk.Frame):
             return False
         return True
 
-    def _edit(self, idea: Idea, can_delete: bool = False) -> IdeaEditor:
-        editor = IdeaEditor(self, idea, can_delete)
+    def _edit(
+        self, idea: Idea, can_delete: bool = False, save_description=None
+    ) -> IdeaEditor:
+        editor = IdeaEditor(self, idea, can_delete, save_description)
         self.wait_window(editor)
         return editor
 
@@ -569,7 +664,16 @@ class App(ttk.Frame):
             return
         # Edit a copy so Cancel can't leave half-applied changes behind.
         working = Idea.from_dict(vars(idea))
-        editor = self._edit(working, can_delete=True)
+
+        def save_description(text: str) -> bool:
+            # Independent of the editor's Save: only the stored description changes.
+            old, idea.description = idea.description, text
+            if self._persist():
+                return True
+            idea.description = old
+            return False
+
+        editor = self._edit(working, can_delete=True, save_description=save_description)
         if editor.deleted:
             self.ideas.remove(idea)
             self._persist()
