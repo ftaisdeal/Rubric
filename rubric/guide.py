@@ -76,7 +76,7 @@ Changing the weights for one idea does not affect any other idea.
 ## Keyboard shortcuts
 
 - Command+N: New Idea
-- Command+W: close the active window (from the main window, this quits Rubric)
+- Command+W: close the active window (it does nothing in the main window; use Command+Q to quit Rubric)
 - Return: edit the selected idea in the main window
 
 ## Your data

@@ -1,8 +1,11 @@
 """Tkinter desktop UI: comparison table and idea editor."""
 
+import os
+import sys
 import tkinter as tk
 from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
+from . import apikey
 from .guide import guide_text
 from .rubric import CRITERIA, DEFAULT_WEIGHTS, MAX_SCORE, MIN_SCORE
 from .scoring import total_score
@@ -674,6 +677,93 @@ class GuideWindow(tk.Toplevel):
         self.destroy()
 
 
+class ApiKeyWindow(tk.Toplevel):
+    """Set or remove the Anthropic API key. The key is never shown, only whether it is set."""
+
+    def __init__(self, parent: tk.Misc):
+        super().__init__(parent)
+        self.title("API Key")
+        self.configure(background=PAGE_BG)
+        self.resizable(False, False)
+        self.transient(parent)
+
+        body = tk.Frame(self, padx=16, pady=14, background=PAGE_BG)
+        body.pack(fill="both", expand=True)
+        self.status = tk.Label(body, background=PAGE_BG, anchor="w", justify="left")
+        self.status.pack(fill="x")
+        tk.Label(
+            body, text="Anthropic API key", background=PAGE_BG, anchor="w"
+        ).pack(fill="x", pady=(10, 2))
+        self.key_var = tk.StringVar()
+        self.entry = ttk.Entry(body, textvariable=self.key_var, show="•", width=44)
+        self.entry.pack(fill="x")
+        self.hint = tk.Label(
+            body, background=PAGE_BG, anchor="w", justify="left", foreground="gray40"
+        )
+        self.hint.pack(fill="x", pady=(6, 0))
+
+        buttons = tk.Frame(body, background=PAGE_BG)
+        buttons.pack(fill="x", pady=(12, 0))
+        IdeaEditor._button(buttons, "Save", self._save).pack(side="left")
+        IdeaEditor._button(buttons, "Cancel", self.destroy).pack(side="left", padx=6)
+        self.remove_btn = IdeaEditor._button(
+            buttons, "Remove key", self._remove, foreground=DELETE_FG
+        )
+        self.remove_btn.pack(side="right")
+
+        self.bind("<Return>", lambda e: self._save())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._refresh()
+        self.entry.focus_set()
+        self.grab_set()
+
+    def request_close(self) -> None:
+        """Command-W."""
+        self.destroy()
+
+    def _refresh(self) -> None:
+        """Show whether a key is set, and where it would come from."""
+        try:
+            key = apikey.get_key()
+        except apikey.ApiKeyError as e:
+            self.status.config(text=str(e), foreground="#b91c1c")
+            self.remove_btn.config(state="disabled")
+            return
+        from_env = bool(os.environ.get(apikey.ENV_VAR, "").strip())
+        if from_env:
+            text = f"Using the {apikey.ENV_VAR} environment variable."
+        else:
+            text = "A key is saved." if key else "No key is saved."
+        self.status.config(text=text, foreground="black")
+        self.remove_btn.config(state="normal" if key and not from_env else "disabled")
+        self.hint.config(
+            text="Saved in your Keychain." if sys.platform == "darwin"
+            else "Saved in a file only you can read."
+        )
+
+    def _save(self) -> None:
+        try:
+            apikey.set_key(self.key_var.get())
+        except apikey.ApiKeyError as e:
+            messagebox.showwarning("API key", str(e), parent=self)
+            return
+        self.key_var.set("")
+        self._refresh()
+        self.destroy()
+
+    def _remove(self) -> None:
+        if not messagebox.askyesno(
+            "Remove API key", "Remove the saved API key?", parent=self
+        ):
+            return
+        try:
+            apikey.delete_key()
+        except apikey.ApiKeyError as e:
+            messagebox.showwarning("API key", str(e), parent=self)
+            return
+        self._refresh()
+
+
 class App(ttk.Frame):
     def __init__(self, root: tk.Tk, storage: Storage, ideas: list[Idea]):
         super().__init__(root, padding=APP_PADDING)
@@ -692,6 +782,8 @@ class App(ttk.Frame):
             label="New Idea", accelerator=f"{mod}+N", command=self._new_idea_soon
         )
         file_menu.add_separator()
+        file_menu.add_command(label="API Key…", command=self._show_api_key_soon)
+        file_menu.add_separator()
         file_menu.add_command(
             label="Close Window", accelerator=f"{mod}+W", command=self._close_window
         )
@@ -702,6 +794,18 @@ class App(ttk.Frame):
         root.config(menu=menubar)
         root.bind(f"<{mod}-n>", lambda e: self._new_idea_soon())
         self.bind_all(f"<{mod}-w>", lambda e: self._close_window())
+
+    def _show_api_key_soon(self) -> None:
+        # After the menu action returns, like _new_idea_soon.
+        self.after(50, self.show_api_key)
+
+    def show_api_key(self) -> None:
+        """Open the API key window, or bring it forward if it is already open."""
+        win = getattr(self, "_api_key", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+            return
+        self._api_key = ApiKeyWindow(self.winfo_toplevel())
 
     def _show_guide_soon(self) -> None:
         # After the menu action returns, like _new_idea_soon.
@@ -717,13 +821,15 @@ class App(ttk.Frame):
         self._guide = GuideWindow(self)
 
     def _close_window(self) -> None:
-        """Close the active window: a dialog is cancelled, the main window quits."""
+        """Close the active dialog. The main window isn't closed this way; quit with Command+Q."""
         try:
             focused = self.focus_get()
         except KeyError:  # tkinter can't name some native popups
             focused = None
         window = focused.winfo_toplevel() if focused else self.grab_current()
         window = window or self.winfo_toplevel()
+        if window is self.winfo_toplevel():
+            return  # closing the main window would quit the app
         getattr(window, "request_close", window.destroy)()
 
     def _new_idea_soon(self) -> None:
